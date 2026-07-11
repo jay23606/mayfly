@@ -80,31 +80,40 @@ const viewCamera = (defaultRecipientId = null) => {
         ctx.drawImage(v, 0, 0);
         compose(processCanvas(c), defaultRecipientId);
     };
+    const captureVideoPreview = () => {
+        const v = $('#cam'); if (!v?.videoWidth) return null;
+        const scale = 24 / Math.max(v.videoWidth, v.videoHeight);
+        const c = Object.assign(document.createElement('canvas'), {
+            width: Math.max(1, Math.round(v.videoWidth * scale)), height: Math.max(1, Math.round(v.videoHeight * scale)),
+        });
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', 0.5);
+    };
     let holdTimer = null, recorder = null, maxRecordTimer = null, longPress = false;
     const stopRecording = () => {
         clearTimeout(maxRecordTimer);
         if (recorder?.state === 'recording') recorder.stop();
     };
-    const startRecording = async () => {
+    const startRecording = () => {
         if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
-        let audioStream = null;
-        try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {}
-        if (!longPress) { audioStream?.getTracks().forEach(t => t.stop()); return; }
         const chunks = [];
-        const recordingStream = new MediaStream([...stream.getVideoTracks(), ...(audioStream?.getAudioTracks() || [])]);
-        try { recorder = new MediaRecorder(recordingStream); }
-        catch (e) { audioStream?.getTracks().forEach(t => t.stop()); return toast('Could not start video recording.'); }
+        const preview = captureVideoPreview();
+        try { recorder = new MediaRecorder(stream); }
+        catch (e) { return toast('Could not start video recording.'); }
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
             shoot.classList.remove('recording');
             const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
             recorder = null;
-            audioStream?.getTracks().forEach(t => t.stop());
             if (!blob.size) return;
-            try { compose(await processVideo(blob), defaultRecipientId); }
+            try {
+                const shot = await processVideo(blob);
+                if (preview) shot.preview = preview;
+                compose(shot, defaultRecipientId);
+            }
             catch (e) { toast('Could not prepare that video.'); }
         };
-        recorder.start();
+        recorder.start(250);
         shoot.classList.add('recording');
         maxRecordTimer = setTimeout(stopRecording, 10000);
     };

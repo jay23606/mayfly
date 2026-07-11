@@ -175,8 +175,10 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .groupin .ginput{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:11px 14px;outline:none;font-size:16px}
 .groupin .ginput:focus{border-color:var(--accent)}
 .grecord{display:flex;align-items:center;gap:10px;padding:7px 12px;color:#ff5572;font-size:13px;font-weight:700;border-top:1px solid var(--line);background:#ff3b5c12}
+.grecord[hidden]{display:none}
 .grecord button{margin-left:auto;border:0;border-radius:999px;padding:6px 12px;cursor:pointer;background:var(--panel2);color:var(--text);font-weight:700}
 .grecord .gstop{margin-left:0;background:var(--grad);color:#08080c}
+.grecord audio{height:32px;max-width:min(220px,58vw)}
 .urow.unread{border-color:var(--accent)}
 .unreaddot{width:10px;height:10px;border-radius:50%;background:#ff3b5c;flex:none}
 .reddot{position:absolute;top:8px;right:14px;width:9px;height:9px;border-radius:50%;background:#ff3b5c;display:none}

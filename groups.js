@@ -8,12 +8,14 @@ import { db } from './db.js';
 // call is a full P2P *mesh* — every member connects to every other. Rendered as a full
 // view; leaving the view tears the channel down (ephemeral room semantics).
 let current = null;   // the open group panel, or null
+const backgrounds = new Map(); // groups subscribed while their window is not open
 
 const memberMap = (group) => { const m = {}; (group.mf_group_members || []).forEach(gm => { m[gm.user_id] = gm.profiles || {}; }); return m; };
-const gLine = (gp, html) => { const l = $('.chatlog', gp.node); if (!l) return; l.appendChild(el(html)); l.scrollTop = l.scrollHeight; };
+const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; l.appendChild(el(html)); l.scrollTop = l.scrollHeight; };
 const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
 const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
+const notifyGroup = (gp, body) => { if (!gp.node && window.Notification?.permission === 'granted') new Notification(gp.name || 'Group', { body }); };
 
 // ---- group P2P media (files, clips, and view-once snaps) ----
 const MEDIA_MAX = 20 * 1024 * 1024;
@@ -64,8 +66,13 @@ const wireGroupData = (gp, uid, conn) => {
             const item = incoming; incoming = null;
             const blob = new Blob(item.chunks, { type: item.meta.mime || '' });
             const media = { ...item.meta, url: URL.createObjectURL(blob) };
-            if (media.snap) groupSnapCard(gp, media, 'them', item.meta.nameFrom);
-            else groupMediaBubble(gp, media, 'them', item.meta.nameFrom);
+            if (gp.node) {
+                if (media.snap) groupSnapCard(gp, media, 'them', item.meta.nameFrom);
+                else groupMediaBubble(gp, media, 'them', item.meta.nameFrom);
+            } else {
+                gp.pending.push({ media, name: item.meta.nameFrom });
+                notifyGroup(gp, `${item.meta.nameFrom || 'Someone'} sent ${media.snap ? 'a Snap' : 'media'}.`);
+            }
         }
     });
     conn.on('chunk', (ab) => { if (incoming) incoming.chunks.push(ab); });
@@ -80,7 +87,7 @@ const syncGroupDataPeers = (gp) => {
     }
 };
 export const onIncomingGroupData = (conn) => {
-    const gp = current && current.id === conn.metadata?.group ? current : null;
+    const gp = current && current.id === conn.metadata?.group ? current : backgrounds.get(conn.metadata?.group);
     if (!gp || !gp.members[conn.peer]) return conn.close();
     wireGroupData(gp, conn.peer, conn);
 };
@@ -157,10 +164,10 @@ export const onIncomingGroupCall = (c) => {
 // ---- presence + messaging ----
 const updatePresence = (gp) => {
     const st = gp.ch.presenceState();
-    const o = $('.gonline', gp.node); if (o) o.textContent = `${Object.keys(st).length} online`;
+    const o = gp.node && $('.gonline', gp.node); if (o) o.textContent = `${Object.keys(st).length} online`;
     const othersInCall = Object.keys(st).some(k => k !== state.me.id && st[k].some(m => m.in_call));
-    const btn = $('.gcall', gp.node);
-    if (othersInCall && !gp.call && !gp.notified) { gSys(gp, 'Video call in progress — tap 📹 to join'); gp.notified = true; btn?.classList.add('ring'); }
+    const btn = gp.node && $('.gcall', gp.node);
+    if (gp.node && othersInCall && !gp.call && !gp.notified) { gSys(gp, 'Video call in progress — tap 📹 to join'); gp.notified = true; btn?.classList.add('ring'); }
     if (!othersInCall) { gp.notified = false; btn?.classList.remove('ring'); }
     if (gp.call) meshUpdate(gp);
     syncGroupDataPeers(gp);
@@ -191,17 +198,46 @@ const wireGroupMic = (gp) => {
     $('.gstop', gp.node).onclick = stop;
 };
 
+const startBackground = (group, pending = []) => {
+    if (!group || backgrounds.has(group.id) || (current && current.id === group.id)) return;
+    const gp = { id: group.id, group, node: null, members: memberMap(group), call: null, ch: null,
+        name: group.name, dataPeers: new Map(), pending };
+    const ch = sb.channel('mfgroup:' + group.id, { config: { private: true, presence: { key: state.me.id }, broadcast: { self: false } } });
+    gp.ch = ch;
+    ch.on('broadcast', { event: 'g' }, ({ payload }) => {
+        if (!payload || payload.from === state.me.id || payload.t !== 'msg') return;
+        gp.pending.push({ text: payload.text, name: payload.name });
+        notifyGroup(gp, `${payload.name || 'Someone'}: ${payload.text}`);
+    });
+    ch.on('presence', { event: 'sync' }, () => updatePresence(gp));
+    ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
+    backgrounds.set(group.id, gp);
+};
+const pauseBackground = (id) => {
+    const gp = backgrounds.get(id); if (!gp) return [];
+    backgrounds.delete(id);
+    gp.dataPeers.forEach(c => { try { c.close(); } catch (e) {} });
+    try { gp.ch.unsubscribe(); } catch (e) {}
+    return gp.pending || [];
+};
+export const bootGroups = async () => {
+    const { data } = await db.myGroups();
+    (data || []).forEach(g => startBackground(g));
+};
+
 // Tear down the open group when navigating away.
 export const closeCurrentGroup = () => {
     if (!current) return;
-    leaveCall(current);
-    current.dataPeers?.forEach(c => { try { c.close(); } catch (e) {} });
-    try { current.ch.unsubscribe(); } catch (e) {}
-    current = null;
+    const gp = current; current = null;
+    leaveCall(gp);
+    gp.dataPeers?.forEach(c => { try { c.close(); } catch (e) {} });
+    try { gp.ch.unsubscribe(); } catch (e) {}
+    startBackground(gp.group, gp.pending || []);
 };
 
 const openGroup = (group) => {
     closeCurrentGroup();
+    const pending = pauseBackground(group.id);
     const members = memberMap(group);
     const avs = Object.entries(members).filter(([uid]) => uid !== state.me.id).slice(0, 3).map(([, p]) => avatarHTML(p.username, p.avatar, 'gav')).join('');
     app.innerHTML = `<main class="chatview group">
@@ -225,9 +261,14 @@ const openGroup = (group) => {
           <input class="gsnapfile" type="file" accept="image/*,video/*" capture="environment" hidden>
         </form>
       </main>`;
-    const gp = { id: group.id, node: $('main'), members, call: null, ch: null, name: group.name, dataPeers: new Map() };
+    const gp = { id: group.id, group, node: $('main'), members, call: null, ch: null, name: group.name, dataPeers: new Map(), pending: [] };
     current = gp;
     gSys(gp, `${group.name || 'Group'} · ${Object.keys(members).length} members`);
+    pending.forEach(item => {
+        if (item.text) gText(gp, item.name, item.text, 'them');
+        else if (item.media?.snap) groupSnapCard(gp, item.media, 'them', item.name);
+        else if (item.media) groupMediaBubble(gp, item.media, 'them', item.name);
+    });
 
     const ch = sb.channel('mfgroup:' + group.id, { config: { private: true, presence: { key: state.me.id }, broadcast: { self: false } } });
     gp.ch = ch;

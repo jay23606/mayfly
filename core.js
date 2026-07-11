@@ -88,6 +88,7 @@ const processCanvas = (canvas) => {
 const processVideo = async (blob) => {
     const mime = blob.type || 'video/webm';
     const url = URL.createObjectURL(blob);
+    const localPreviewUrl = URL.createObjectURL(blob);
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
     try {
@@ -102,7 +103,10 @@ const processVideo = async (blob) => {
         }
         const preview = scaleTo(v, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
         const full = await bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), mime);
-        return { preview, full, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration };
+        return { preview, full, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration, localPreviewUrl };
+    } catch (e) {
+        URL.revokeObjectURL(localPreviewUrl);
+        throw e;
     } finally { URL.revokeObjectURL(url); }
 };
 // Avatars are small enough to store in the DB so they always show.

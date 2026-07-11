@@ -148,9 +148,12 @@ const compose = async (shot, defaultRecipientId = null) => {
     stopStream();
     const isVideo = shot.mime?.startsWith('video/');
     if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
+    // Preview the original Blob URL. `full` remains the encoded payload used for delivery.
+    const previewUrl = isVideo ? (shot.localPreviewUrl || shot.full) : shot.full;
+    const releasePreview = () => { if (shot.localPreviewUrl) URL.revokeObjectURL(shot.localPreviewUrl); };
     app.innerHTML = `<main class="composewrap">
-      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(shot.full)}')"`}>
-        ${isVideo ? `<video src="${safeMediaUrl(shot.full)}" autoplay muted loop playsinline></video>` : ''}
+      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
+        ${isVideo ? `<video src="${safeMediaUrl(previewUrl)}" autoplay muted loop playsinline></video>` : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
@@ -161,7 +164,7 @@ const compose = async (shot, defaultRecipientId = null) => {
         <button class="btn send" id="send" disabled>Send ▸</button>
       </div>
     </main>`;
-    $('#retake').onclick = () => viewCamera(defaultRecipientId);
+    $('#retake').onclick = () => { releasePreview(); viewCamera(defaultRecipientId); };
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
     const chosen = new Set();
     let toStory = false;
@@ -200,6 +203,7 @@ const compose = async (shot, defaultRecipientId = null) => {
         for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
+        releasePreview();
         viewCamera(defaultRecipientId);
     };
 };

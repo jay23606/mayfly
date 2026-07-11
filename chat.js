@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial, ago,
-    avatarHTML, safeMediaUrl, chunkString, mimeKind, bytesToDataUrl } from './core.js';
+    avatarHTML, safeMediaUrl, chunkString, mimeKind } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
 import { encryptText, decryptText, decryptWith } from './crypto.js';
@@ -212,7 +212,7 @@ const openSnap = async (s, card) => {
     let full = null;
     try {
         if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id);
-        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = await bytesToDataUrl(new Uint8Array(pt), snapMime(s)); } }
+        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); } }
     } catch (e) { console.error('[mayfly] open snap', e); }
     if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
     const u = s.sender || {};
@@ -228,7 +228,14 @@ const openSnap = async (s, card) => {
         const v = $('video', ov);
         v.onended = finish;
         v.onclick = (e) => e.stopPropagation();
-        v.play().catch(() => {});
+        v.play().then(() => {
+            v.muted = false;
+            return v.play();
+        }).catch(() => {
+            // Preserve automatic visual playback if the browser blocks autoplay sound.
+            v.muted = true;
+            v.play().catch(() => {});
+        });
     }
     ov.onclick = finish;
 };

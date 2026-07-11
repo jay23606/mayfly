@@ -102,8 +102,7 @@ const processVideo = async (blob) => {
             await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
         }
         const preview = scaleTo(v, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
-        const full = await bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), mime);
-        return { preview, full, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration, localPreviewUrl };
+        return { preview, rawBlob: blob, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration, localPreviewUrl };
     } catch (e) {
         URL.revokeObjectURL(localPreviewUrl);
         throw e;

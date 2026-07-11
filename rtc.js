@@ -132,8 +132,9 @@ const startRtc = (dmHandler, callHandler) => new Promise((resolve) => {
             if (!d || d.type !== 'want') return;
             const full = await idb.get('snap:' + d.id) || await idb.get('story:' + d.id);
             if (!full) return c.send({ type: 'miss', id: d.id });
-            const mime = full.slice(5, full.indexOf(';')) || 'image/jpeg';
-            const buf = await (await fetch(full)).arrayBuffer();
+            const blob = full instanceof Blob ? full : await (await fetch(full)).blob();
+            const mime = blob.type || 'image/jpeg';
+            const buf = await blob.arrayBuffer();
             c.send({ type: 'meta', id: d.id, bytes: buf.byteLength, mime });
             await sendBinary(c.dataChannel, buf);
             c.send({ type: 'done', id: d.id });

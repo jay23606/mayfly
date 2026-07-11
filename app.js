@@ -1,6 +1,6 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl,
     safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeAvatar,
-    idb, dataUrlToBytes, bytesToDataUrl, STORY_TTL_H } from './core.js';
+    idb, dataUrlToBytes, STORY_TTL_H } from './core.js';
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
@@ -153,7 +153,7 @@ const compose = async (shot, defaultRecipientId = null) => {
     const releasePreview = () => { if (shot.localPreviewUrl) URL.revokeObjectURL(shot.localPreviewUrl); };
     app.innerHTML = `<main class="composewrap">
       <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
-        ${isVideo ? `<video src="${safeMediaUrl(previewUrl)}" autoplay muted loop playsinline></video>` : ''}
+        ${isVideo ? `<video class="composevideo" src="${safeMediaUrl(previewUrl)}" autoplay muted loop controls playsinline></video>` : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
@@ -165,6 +165,17 @@ const compose = async (shot, defaultRecipientId = null) => {
       </div>
     </main>`;
     $('#retake').onclick = () => { releasePreview(); viewCamera(defaultRecipientId); };
+    if (isVideo) {
+        const previewPlayer = $('.composevideo');
+        previewPlayer.play().then(() => {
+            previewPlayer.muted = false;
+            return previewPlayer.play();
+        }).catch(() => {
+            // Autoplay sound can be blocked by the browser; keep the visual preview playing.
+            previewPlayer.muted = true;
+            previewPlayer.play().catch(() => {});
+        });
+    }
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
     const chosen = new Set();
     let toStory = false;
@@ -219,7 +230,7 @@ const sendSnap = async (shot, u, caption, secs) => {
             const id = uuid();
             // Store before announcing the row so every recipient can pull the payload
             // as soon as their realtime notification arrives.
-            await idb.set('snap:' + id, shot.full);
+            await idb.set('snap:' + id, shot.rawBlob || shot.full);
             const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
             if (error) { await idb.del('snap:' + id); throw error; }
             db.bumpStreak(u.id);
@@ -231,7 +242,9 @@ const sendSnap = async (shot, u, caption, secs) => {
         if (!isMediaUrl(u.avatar) && !u.pubkey) { /* fallthrough */ }
         if (!u.pubkey) { toast(`${u.username} hasn't finished setting up mayfly.`); return false; }
         const id = uuid();
-        const bytes = await dataUrlToBytes(shot.full);
+        const bytes = shot.rawBlob
+            ? new Uint8Array(await shot.rawBlob.arrayBuffer())
+            : await dataUrlToBytes(shot.full);
         const { ct, iv, ephPub } = await encryptFor(JSON.parse(u.pubkey), bytes);
         const up = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ct]), { contentType: 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;

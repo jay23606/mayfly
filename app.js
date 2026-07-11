@@ -34,13 +34,9 @@ const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
     try {
-        // Ask for a synchronized A/V stream. Merging a separate microphone stream into
-        // an existing camera stream can yield an unplayable recording on some browsers.
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
-        } catch (audioError) {
-            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
-        }
+        // Video-only is the broadly reliable browser capture path. Audio needs a proper
+        // muxing pipeline rather than simply appending it as another live track.
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
     } catch (e) {
@@ -167,7 +163,11 @@ const compose = async (shot, defaultRecipientId = null) => {
     const chosen = new Set();
     let toStory = false;
     const send = $('#send');
-    const refreshSend = () => { const n = chosen.size + (toStory ? 1 : 0); send.disabled = !n; send.textContent = n ? `Send ▸` : 'Send ▸'; };
+    const refreshSend = () => {
+        const n = chosen.size + (toStory ? 1 : 0);
+        send.disabled = !n;
+        send.textContent = n ? `Send (${n}) ▸` : 'Send ▸';
+    };
     const { data: friends } = await db.friends();
     const box = $('#recips'); if (!box) return;
     const list = (friends || []).map(f => otherOf(f)).filter(Boolean);
@@ -196,11 +196,17 @@ const compose = async (shot, defaultRecipientId = null) => {
         send.disabled = true; send.textContent = 'Sending…';
         const caption = $('#cap').value.trim();
         const targets = list.filter(u => chosen.has(u.id));
-        let ok = 0, blocked = 0;
+        let ok = 0, blocked = 0, failed = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
-        for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
+        const results = await Promise.all(targets.map(async (u) => ({ u, result: await sendSnap(shot, u, caption, timer) })));
+        for (const { u, result } of results) {
+            if (result === true) { ok++; noteSentSnap(u.id); }
+            else if (result === 'cap') blocked++;
+            else failed++;
+        }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
+        if (failed) toast(`${failed} recipient${failed === 1 ? '' : 's'} could not receive the Snap.`);
         releasePreview();
         viewCamera(defaultRecipientId);
     };
@@ -215,9 +221,11 @@ const sendSnap = async (shot, u, caption, secs) => {
     try {
         if (isOnline(u.id)) {
             const id = uuid();
+            // Store before announcing the row so every recipient can pull the payload
+            // as soon as their realtime notification arrives.
+            await idb.set('snap:' + id, shot.full);
             const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
-            if (error) throw error;
-            await idb.set('snap:' + id, shot.full);   // held here; streamed P2P when they open it
+            if (error) { await idb.del('snap:' + id); throw error; }
             db.bumpStreak(u.id);
             return true;
         }

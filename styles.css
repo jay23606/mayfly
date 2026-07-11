@@ -286,6 +286,15 @@ body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding
 .snapcard.video .sq,.conv.snap-video .sub.hot{color:#ae8cff}
 .snapcard .sqt{color:var(--muted);font-weight:400;font-size:12px}
 .snapcard.opening{opacity:.5}
+/* sender-side delivery receipt (Snapchat-style): filled = Delivered, hollow = Opened.
+   colour marks the type — red = photo snap, purple = video snap, blue = chat (later). */
+.msgstatus{align-self:flex-end;display:flex;align-items:center;gap:5px;margin:-2px 6px 2px;font-size:11px;font-weight:600;color:var(--muted)}
+.msgstatus .si{width:9px;height:9px;border-radius:2px;border:1.6px solid currentColor;box-sizing:border-box;flex:none}
+.msgstatus.delivered .si{background:currentColor}
+.msgstatus.opened .si{background:transparent}
+.msgstatus.photo{color:#ff5572}
+.msgstatus.video{color:#ae8cff}
+.msgstatus.text{color:#5b8cff}
 .ctyping{min-height:0;padding:2px 14px;color:var(--muted);font-size:12px}
 .tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none}
 .tin .icon{font-size:20px;flex:none}

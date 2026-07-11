@@ -82,7 +82,21 @@ export const onSnapInsert = async (row) => {
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };
-export const noteSentSnap = (uid) => histPush(uid, { me: true, kind: 'snap', at: Date.now() }).then(() => { if (convBox) renderConvs(convBox, openUid); });
+export const noteSentSnap = (uid, snapId = null, snapKind = 'photo') =>
+    histPush(uid, { me: true, kind: 'snap', snapId, snapKind, status: 'delivered', at: Date.now() })
+        .then(() => { if (convBox) renderConvs(convBox, openUid); });
+
+// Snap ids the recipient has opened (their mf_snaps row was deleted → realtime DELETE).
+// Sender-side only: flips the "Delivered" receipt to "Opened".
+const openedSnapIds = new Set();
+export const markSnapOpened = (id) => {
+    if (!id) return;
+    openedSnapIds.add(id);
+    if (openUid) renderThreadBody(openUid);   // reconciles + persists the status
+    if (convBox) renderConvs(convBox, openUid);
+};
+// The sender-side "Delivered"/"Opened" receipt shown under a sent snap.
+const snapReceipt = (e) => `<div class="msgstatus me ${e.snapKind || 'photo'} ${e.status || 'delivered'}"${e.snapId ? ` data-snap="${e.snapId}"` : ''}><span class="si"></span><span class="sl">${e.status === 'opened' ? 'Opened' : 'Delivered'}</span></div>`;
 
 const refreshInbox = async () => {
     const { data } = await db.inbox();
@@ -169,6 +183,10 @@ export const openConversation = async (box, uid) => {
 const renderThreadBody = async (uid) => {
     const body = $('#tbody'); if (!body || openUid !== uid) return;
     const h = await histGet(uid);
+    // reconcile any snaps opened while this thread was closed, and persist the change
+    let dirty = false;
+    h.forEach(e => { if (e.kind === 'snap' && e.snapId && openedSnapIds.has(e.snapId) && e.status !== 'opened') { e.status = 'opened'; dirty = true; } });
+    if (dirty) idb.set('thread:' + uid, h).catch(() => {});
     const snaps = (inboxByUser[uid] || []).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
     body.innerHTML = '';
@@ -178,7 +196,7 @@ const renderThreadBody = async (uid) => {
         else {
             const e = it.entry;
             if (e.kind === 'text') body.appendChild(el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
-            else if (e.kind === 'snap') body.appendChild(el(`<div class="b sys">📷 You sent a Snap</div>`));
+            else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
             else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
         }
     }

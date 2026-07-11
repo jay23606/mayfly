@@ -42,13 +42,21 @@ const groupMediaBubble = (gp, media, cls, name = '') => {
     gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}</div>`);
 };
 const groupSnapCard = (gp, media, cls, name = '') => {
-    const card = el(`<button class="snapcard ${media.kind === 'video' ? 'video' : 'photo'} ${cls}"><span class="sq">${media.kind === 'video' ? '▶' : '●'}</span> Tap to view ${media.kind === 'video' ? 'Video' : 'Photo'} Snap</button>`);
-    if (cls === 'them') card.insertAdjacentHTML('afterbegin', `<span class="gwho">${esc(name)}</span>`);
+    const l = $('.chatlog', gp.node); if (!l) return;
+    const kind = media.kind === 'video' ? 'video' : 'photo';
+    if (cls === 'me') {
+        // sender side: a Delivered → Opened receipt (no tappable card)
+        l.appendChild(el(`<div class="msgstatus me ${kind} delivered" data-snap="${media.id}"><span class="si"></span><span class="sl">Delivered</span></div>`));
+        l.scrollTop = l.scrollHeight;
+        return;
+    }
+    const card = el(`<button class="snapcard ${kind} them"><span class="gwho">${esc(name)}</span><span class="sq">${media.kind === 'video' ? '▶' : '●'}</span> Tap to view ${media.kind === 'video' ? 'Video' : 'Photo'} Snap</button>`);
     card.onclick = () => {
         const tag = media.kind === 'video' ? `<video src="${safeMediaUrl(media.url)}" autoplay controls playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="snap">`;
         const ov = el(`<div class="player">${tag}<div class="pbar"><i></i></div></div>`);
         document.body.appendChild(ov);
-        const finish = () => { clearTimeout(t); ov.remove(); URL.revokeObjectURL(media.url); card.remove(); };
+        // tell the sender we opened it (they flip Delivered → Opened)
+        const finish = () => { clearTimeout(t); ov.remove(); URL.revokeObjectURL(media.url); card.remove(); bcast(gp, { t: 'gsnap-opened', id: media.id }); };
         const t = setTimeout(finish, 5000);
         ov.onclick = finish;
         if (media.kind === 'video') {
@@ -58,8 +66,12 @@ const groupSnapCard = (gp, media, cls, name = '') => {
             video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
         }
     };
-    $('.chatlog', gp.node)?.appendChild(card);
-    $('.chatlog', gp.node).scrollTop = $('.chatlog', gp.node).scrollHeight;
+    l.appendChild(card); l.scrollTop = l.scrollHeight;
+};
+// flip a sender-side group-snap receipt to Opened when a member reports opening it
+const markGroupSnapOpened = (gp, id) => {
+    const s = gp.node && $(`.msgstatus[data-snap="${id}"]`, gp.node);
+    if (s) { s.classList.remove('delivered'); s.classList.add('opened'); const sl = $('.sl', s); if (sl) sl.textContent = 'Opened'; }
 };
 const wireGroupData = (gp, uid, conn) => {
     if (gp.dataPeers.has(uid)) { try { conn.close(); } catch (e) {} return; }
@@ -124,7 +136,7 @@ const sendGroupMedia = async (gp, file, snap = false) => {
     if (gp.node) {
         if (snap) groupSnapCard(gp, media, 'me'); else groupMediaBubble(gp, media, 'me');
     } else {
-        gp.pending.push({ media, name: 'You' });
+        gp.pending.push({ media, name: 'You', me: true });
     }
 };
 
@@ -314,14 +326,19 @@ const openGroup = (group, container = app) => {
     current = gp;
     gSys(gp, `${group.name || 'Group'} · ${Object.keys(members).length} members`);
     pending.forEach(item => {
+        const cls = item.me ? 'me' : 'them';
         if (item.text) gText(gp, item.name, item.text, 'them');
-        else if (item.media?.snap) groupSnapCard(gp, item.media, 'them', item.name);
-        else if (item.media) groupMediaBubble(gp, item.media, 'them', item.name);
+        else if (item.media?.snap) groupSnapCard(gp, item.media, cls, item.name);
+        else if (item.media) groupMediaBubble(gp, item.media, cls, item.name);
     });
 
     const ch = sb.channel('mfgroup:' + group.id, { config: { private: true, presence: { key: state.me.id }, broadcast: { self: false } } });
     gp.ch = ch;
-    ch.on('broadcast', { event: 'g' }, ({ payload }) => { if (payload && payload.from !== state.me.id && payload.t === 'msg') gText(gp, payload.name, payload.text, 'them'); });
+    ch.on('broadcast', { event: 'g' }, ({ payload }) => {
+        if (!payload || payload.from === state.me.id) return;
+        if (payload.t === 'msg') gText(gp, payload.name, payload.text, 'them');
+        else if (payload.t === 'gsnap-opened') markGroupSnapOpened(gp, payload.id);
+    });
     ch.on('presence', { event: 'sync' }, () => updatePresence(gp));
     ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
 

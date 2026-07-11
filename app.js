@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapOpened, bootChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -276,7 +276,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
             send.textContent = `Sending ${done + 1}–${Math.min(done + batch.length, targets.length)} of ${targets.length}…`;
             const results = await Promise.all(batch.map(u => sendSnap(shot, u, caption, timer)));
             results.forEach((r, index) => {
-                if (r === true) { ok++; noteSentSnap(batch[index].id); }
+                if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
             });
             done += batch.length;
@@ -296,11 +296,12 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
 };
 
 // Send one snap. Online recipient → live P2P (no server media). Offline → encrypted
-// relay, capped at ONE unopened relay snap per recipient. Returns true | 'cap' | false.
+// relay, capped at ONE unopened relay snap per recipient. Returns {id, kind} | 'cap' | false.
 const sendSnap = async (shot, u, caption, secs) => {
     const base = { sender_id: state.me.id, recipient_id: u.id, preview: shot.preview,
         caption, w: shot.w, h: shot.h, timer: secs };
-    const taggedDelivery = (kind) => shot.mime?.startsWith('video/') ? `${kind}:${encodeURIComponent(shot.mime)}` : kind;
+    const kind = shot.mime?.startsWith('video/') ? 'video' : 'photo';
+    const taggedDelivery = (k) => shot.mime?.startsWith('video/') ? `${k}:${encodeURIComponent(shot.mime)}` : k;
     try {
         if (isOnline(u.id)) {
             const id = uuid();
@@ -310,7 +311,7 @@ const sendSnap = async (shot, u, caption, secs) => {
             const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
             if (error) { await idb.del('snap:' + id); throw error; }
             db.bumpStreak(u.id);
-            return true;
+            return { id, kind };
         }
         // offline → relay. Enforce the one-pending-per-recipient cap.
         const { count } = await db.pendingRelayTo(u.id);
@@ -327,7 +328,7 @@ const sendSnap = async (shot, u, caption, secs) => {
         const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay'), iv, eph_pub: ephPub });
         if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
         db.bumpStreak(u.id);
-        return true;
+        return { id, kind };
     } catch (e) { console.error('[mayfly] send failed', e); return false; }
 };
 
@@ -628,9 +629,9 @@ window.addEventListener('hashchange', () => { mountChrome(); route(); });
 const startRealtime = () => {
     sb.channel('mayfly-snaps')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_snaps', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onSnapInsert(payload.new))
-      // one of my sent snaps was opened/expired (row deleted) → drop my local copy
+      // one of my sent snaps was opened/expired (row deleted) → drop my local copy + mark opened
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_snaps' }, (payload) => {
-          if (payload.old?.id) idb.del('snap:' + payload.old.id);
+          if (payload.old?.id) { idb.del('snap:' + payload.old.id); markSnapOpened(payload.old.id); }
       })
       .subscribe();
     sb.channel('mayfly-messages')

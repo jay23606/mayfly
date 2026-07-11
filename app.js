@@ -529,17 +529,11 @@ const viewGate = () => {
             <div class="err" id="ae"></div>
             <button class="btn" id="go">${mode === 'up' ? 'Sign up' : 'Log in'}</button>
           </form>
-          <div class="orline"><span>or</span></div>
-          <button class="btn google" id="google"><span class="gg">G</span> Continue with Google</button>
           <div class="swap">${mode === 'up' ? 'Have an account?' : "New here?"}
             <button class="btn ghost inline" id="swap">${mode === 'up' ? 'Log in' : 'Sign up'}</button></div>
         </div>`;
         $('#swap').onclick = () => { mode = mode === 'up' ? 'in' : 'up'; render(); };
         $('#af').onsubmit = submit;
-        $('#google').onclick = async () => {
-            const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } });
-            if (error) $('#ae').textContent = error.message;
-        };
     };
     const submit = async (e) => {
         e.preventDefault();

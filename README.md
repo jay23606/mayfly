@@ -35,7 +35,6 @@ Runs entirely client-side — the publishable key in `core.js` is public-safe be
 - **Chat** — ephemeral P2P DMs: text, **voice notes**, and photo/video/file attachments (nothing on the server).
 - **Video calls** — 1:1 P2P video/voice (WebRTC), plus **group mesh calls**.
 - **Group chats** — persistent membership (`mf_groups`), ephemeral Realtime Broadcast text on member-only `mfgroup:` channels, full P2P mesh video.
-- **Google sign-in** — `signInWithOAuth` (requires enabling the Google provider in your Supabase project).
 
 ## Roadmap
 

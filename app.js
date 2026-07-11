@@ -34,9 +34,16 @@ const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
     try {
-        // Video-only is the broadly reliable browser capture path. Audio needs a proper
-        // muxing pipeline rather than simply appending it as another live track.
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        // Request camera and microphone together so MediaRecorder receives one
+        // synchronized stream. Keep the video-only fallback for a denied mic.
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: facing },
+                audio: { echoCancellation: true, noiseSuppression: true },
+            });
+        } catch (audioError) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        }
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
     } catch (e) {

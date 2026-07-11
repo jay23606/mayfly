@@ -128,6 +128,15 @@ const sendGroupMedia = async (gp, file, snap = false) => {
     }
 };
 
+// Send a captured snap into a group's chat (not to members individually). Reuses the
+// group's live P2P media path so it lands as a "Tap to view Snap" card in the thread.
+export const sendSnapToGroupChat = async (groupId, file) => {
+    const gp = (current && current.id === groupId) ? current : backgrounds.get(groupId);
+    if (!gp) return false;
+    try { await sendGroupMedia(gp, file, true); return true; }
+    catch (e) { console.error('[mayfly] group snap failed', e); return false; }
+};
+
 // ---- mesh video ----
 const tileFor = (gp, uid, stream, name, isLocal) => {
     let t = $(`.gtile[data-uid="${uid}"]`, gp.node);
@@ -294,10 +303,10 @@ const openGroup = (group) => {
         <div class="chatlog"></div>
         <div class="grecord" hidden><span>● Recording voice clip…</span><button type="button" class="gcancel">Cancel</button><button type="button" class="gstop">Send</button></div>
         <form class="chatin groupin">
-          <input class="ginput" placeholder="Message the group…" autocomplete="off" enterkeyhint="send" aria-label="Message">
-          <button type="button" class="icon gattach" aria-label="Attach a file">${icon('paperclip')}</button>
-          <button type="button" class="icon gmic" aria-label="Record voice clip">${icon('mic')}</button>
           <button type="button" class="icon gsnap" aria-label="Send a Snap">${icon('camera')}</button>
+          <input class="ginput" placeholder="Message the group…" autocomplete="off" enterkeyhint="send" aria-label="Message">
+          <button type="button" class="icon gmic" aria-label="Record voice clip">${icon('mic')}</button>
+          <button type="button" class="icon gattach" aria-label="Attach a file">${icon('paperclip')}</button>
           <input class="gfile" type="file" hidden>
         </form>
       </main>`;

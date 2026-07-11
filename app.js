@@ -5,7 +5,7 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
-import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups } from './groups.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
@@ -195,15 +195,10 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
     const selectedFriendIds = () => allFriends
         ? list.slice(0, ALL_FRIENDS_LIMIT).map(u => u.id)
         : [...chosen];
-    const selectedRecipientIds = () => new Set([
-        ...selectedFriendIds(),
-        ...groupList.filter(g => chosenGroups.has(g.id))
-            .flatMap(g => (g.mf_group_members || []).map(m => m.user_id))
-            .filter(id => id !== state.me.id),
-    ]);
+    // A selected group counts as one destination — the Snap goes to its chat, not to
+    // each member individually.
     const refreshSend = () => {
-        const recipientCount = selectedRecipientIds().size;
-        const n = recipientCount + (toStory ? 1 : 0);
+        const n = selectedFriendIds().length + chosenGroups.size + (toStory ? 1 : 0);
         send.disabled = !n;
         send.textContent = n ? `Send to ${n} ▸` : 'Send ▸';
     };
@@ -261,18 +256,18 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
     search.oninput = renderRecipients;
     renderRecipients();
     refreshSend();
+    // Build a File from the captured snap for group P2P delivery.
+    const snapFile = async () => shot.rawBlob
+        ? new File([shot.rawBlob], 'snap', { type: shot.mime || 'video/webm' })
+        : new File([await dataUrlToBytes(shot.full)], 'snap.jpg', { type: shot.mime || 'image/jpeg' });
     send.onclick = async () => {
         const directIds = selectedFriendIds();
         if (allFriends && list.length > ALL_FRIENDS_LIMIT && !confirm(`Send this Snap to your ${ALL_FRIENDS_LIMIT} most recent friends? You have ${list.length} friends total, so the rest will not receive this one.`)) return;
         send.disabled = true;
         const caption = $('#cap').value.trim();
-        const directTargets = list.filter(u => directIds.includes(u.id));
-        const groupIds = new Set(groupList.filter(g => chosenGroups.has(g.id)).flatMap(g => (g.mf_group_members || []).map(m => m.user_id)).filter(id => id !== state.me.id));
-        const known = new Map(directTargets.map(u => [u.id, u]));
-        const missing = [...groupIds].filter(id => !known.has(id));
-        const loaded = await Promise.all(missing.map(async id => (await db.profileById(id)).data));
-        loaded.filter(Boolean).forEach(u => known.set(u.id, u));
-        const targets = [...new Map([...directTargets, ...[...groupIds].map(id => known.get(id)).filter(Boolean)].map(u => [u.id, u])).values()];
+        // Friends receive an individual Snap; groups receive it in their chat only.
+        const targets = list.filter(u => directIds.includes(u.id));
+        const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
         let ok = 0, blocked = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
@@ -286,6 +281,13 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
                 else if (r === 'cap') blocked++;
             });
             done += batch.length;
+        }
+        if (selectedGroups.length) {
+            const file = await snapFile();
+            for (const g of selectedGroups) {
+                send.textContent = `Sending to ${g.name || 'group'}…`;
+                if (await sendSnapToGroupChat(g.id, file)) ok++;
+            }
         }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');

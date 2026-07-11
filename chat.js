@@ -140,10 +140,10 @@ export const openConversation = async (box, uid) => {
         <div class="ctyping" id="ctyping"></div>
         <div class="voicepreview" hidden></div>
         <form class="tin">
-          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" aria-label="Message">
-          <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
-          <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
+          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" aria-label="Message">
+          <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
+          <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
           <input type="file" class="fileinput" hidden>
         </form>
       </div>`;

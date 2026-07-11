@@ -211,6 +211,7 @@ const playStories = (groups, startGroup = 0) => {
         <img alt="story"><div class="pcap"></div><div class="pname"></div>
         <div class="tapzones"><div class="tz left"></div><div class="tz right"></div></div>
         <button class="storyclose" aria-label="Close stories" title="Close">×</button>
+        <button class="storyprev" aria-label="Previous story" title="Previous story">‹</button>
         <button class="storynext" aria-label="Next story" title="Next story">›</button>
         <div class="viewers"></div></div>`);
     document.body.appendChild(ov);
@@ -256,6 +257,7 @@ const playStories = (groups, startGroup = 0) => {
     $('.tz.right', ov).onclick = () => show(i + 1);
     $('.tz.left', ov).onclick = () => show(i - 1);
     $('.storyclose', ov).onclick = close;
+    $('.storyprev', ov).onclick = () => show(i - 1);
     $('.storynext', ov).onclick = () => show(i + 1);
     $('.viewers', ov).onclick = (e) => e.stopPropagation();
     document.addEventListener('keydown', onKeydown);

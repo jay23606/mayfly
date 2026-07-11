@@ -1,0 +1,190 @@
+-- mayfly — Supabase schema + Row Level Security
+-- Run once in the Supabase dashboard: SQL Editor → New query → paste → Run.
+--
+-- mayfly shares the SAME Supabase project as instamegle, so EVERY object here is
+-- mf_-prefixed to avoid collisions. Design: snaps are ephemeral + directed.
+--  • Recipient ONLINE  → the full image streams peer-to-peer, never touching the DB.
+--  • Recipient OFFLINE → the image is encrypted to the recipient's public key and
+--    parked as ciphertext in the private "mf-snaps" Storage bucket (zero-knowledge).
+-- The only image bytes this DB ever holds is a tiny ~24px blurred "preview" (LQIP).
+-- A snap row is HARD-DELETED the moment it's viewed (or after it expires).
+
+-- ---------------------------------------------------------------------------
+-- mf_profiles: one row per user, id === auth.users.id
+-- pubkey = the device's ECDH P-256 public key (JWK). The private half never leaves
+-- the device (IndexedDB). The app self-heals a missing profile on login, so there's
+-- no signup trigger here (we don't touch the shared auth.users triggers).
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_profiles (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  username   text unique not null,
+  avatar     text not null default '',   -- tiny base64 JPEG, optional
+  pubkey     text not null default '',    -- ECDH public key (JWK json)
+  created_at timestamptz not null default now()
+);
+alter table public.mf_profiles enable row level security;
+create policy "mf_profiles_select" on public.mf_profiles for select using (true);
+create policy "mf_profiles_insert" on public.mf_profiles for insert with check (auth.uid() = id);
+create policy "mf_profiles_update" on public.mf_profiles for update using (auth.uid() = id);
+
+-- ---------------------------------------------------------------------------
+-- mf_friends: symmetric friendship, one row per pair (requester -> addressee)
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_friends (
+  requester_id uuid not null references public.mf_profiles(id) on delete cascade,
+  addressee_id uuid not null references public.mf_profiles(id) on delete cascade,
+  status       text not null default 'pending',   -- pending | accepted
+  created_at   timestamptz not null default now(),
+  primary key (requester_id, addressee_id),
+  check (requester_id <> addressee_id)
+);
+alter table public.mf_friends enable row level security;
+-- you can see a row only if you're one of the two people in it
+create policy "mf_friends_select" on public.mf_friends for select
+  using (auth.uid() = requester_id or auth.uid() = addressee_id);
+create policy "mf_friends_insert" on public.mf_friends for insert
+  with check (auth.uid() = requester_id and status = 'pending');
+create policy "mf_friends_update" on public.mf_friends for update   -- only the addressee can accept
+  using (auth.uid() = addressee_id);
+create policy "mf_friends_delete" on public.mf_friends for delete    -- either party can remove/cancel/decline
+  using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+-- ---------------------------------------------------------------------------
+-- mf_snaps: directed, ephemeral. preview (LQIP) only; full image is P2P or encrypted.
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_snaps (
+  id           uuid primary key default gen_random_uuid(),
+  sender_id    uuid not null references public.mf_profiles(id) on delete cascade,
+  recipient_id uuid not null references public.mf_profiles(id) on delete cascade,
+  preview      text not null,                      -- ~24px blurred LQIP
+  caption      text not null default '',
+  w            int,
+  h            int,
+  timer        int not null default 5,             -- seconds shown when opened
+  delivery     text not null,                      -- 'live' (P2P) | 'relay' (encrypted Storage)
+  iv           text,                               -- relay only: AES-GCM iv (b64)
+  eph_pub      text,                               -- relay only: sender's ephemeral ECDH public key (JWK)
+  viewed_at    timestamptz,
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null default now() + interval '24 hours'
+);
+create index if not exists mf_snaps_inbox_idx on public.mf_snaps (recipient_id, created_at desc);
+create index if not exists mf_snaps_sender_idx on public.mf_snaps (sender_id);
+alter table public.mf_snaps enable row level security;
+create policy "mf_snaps_select" on public.mf_snaps for select
+  using (auth.uid() = sender_id or auth.uid() = recipient_id);
+create policy "mf_snaps_insert" on public.mf_snaps for insert
+  with check (auth.uid() = sender_id);
+create policy "mf_snaps_update" on public.mf_snaps for update    -- recipient marks viewed
+  using (auth.uid() = recipient_id);
+create policy "mf_snaps_delete" on public.mf_snaps for delete
+  using (auth.uid() = sender_id or auth.uid() = recipient_id);
+
+-- ---------------------------------------------------------------------------
+-- mf_streaks: consecutive-day snap streak per pair (canonical a<b)
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_streaks (
+  user_a  uuid not null references public.mf_profiles(id) on delete cascade,
+  user_b  uuid not null references public.mf_profiles(id) on delete cascade,
+  count   int not null default 0,
+  last_at timestamptz not null default now(),
+  primary key (user_a, user_b),
+  check (user_a < user_b)
+);
+alter table public.mf_streaks enable row level security;
+create policy "mf_streaks_select" on public.mf_streaks for select
+  using (auth.uid() = user_a or auth.uid() = user_b);
+-- (no insert/update policy: the SECURITY DEFINER function below is the only writer)
+
+-- Bump the streak between the caller and `other`. Date-based: same day = no change,
+-- next day = +1, a gap of 2+ days = reset to 1. Runs as definer to bypass RLS.
+create or replace function public.mf_bump_streak(other uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  a uuid := least(auth.uid(), other);
+  b uuid := greatest(auth.uid(), other);
+  d int;
+begin
+  if auth.uid() is null or other is null or a = b then return; end if;
+  insert into public.mf_streaks (user_a, user_b, count, last_at)
+  values (a, b, 1, now())
+  on conflict (user_a, user_b) do update
+    set count = case
+                  when (current_date - mf_streaks.last_at::date) = 0 then mf_streaks.count
+                  when (current_date - mf_streaks.last_at::date) = 1 then mf_streaks.count + 1
+                  else 1
+                end,
+        last_at = now();
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Storage bucket for encrypted relay blobs (private; content is E2E-encrypted).
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('mf-snaps', 'mf-snaps', false)
+on conflict (id) do nothing;
+
+-- Any authenticated user may upload / read / delete objects in this bucket. That's
+-- safe here: every object is ciphertext encrypted to a specific recipient's key, so
+-- read access reveals nothing without the recipient's device-held private key.
+drop policy if exists "mf_snaps_obj_insert" on storage.objects;
+create policy "mf_snaps_obj_insert" on storage.objects for insert to authenticated
+  with check (bucket_id = 'mf-snaps');
+drop policy if exists "mf_snaps_obj_select" on storage.objects;
+create policy "mf_snaps_obj_select" on storage.objects for select to authenticated
+  using (bucket_id = 'mf-snaps');
+drop policy if exists "mf_snaps_obj_delete" on storage.objects;
+create policy "mf_snaps_obj_delete" on storage.objects for delete to authenticated
+  using (bucket_id = 'mf-snaps');
+
+-- ---------------------------------------------------------------------------
+-- mf_stories: 24h ephemeral posts, visible to friends. Like a snap, the full image
+-- is P2P (or blurred if you're offline) — only the LQIP preview lives here.
+-- Replayable within 24h (not view-once), with a viewer list for the author.
+-- ---------------------------------------------------------------------------
+create or replace function public.mf_is_friend(other uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from public.mf_friends f where f.status = 'accepted'
+    and ((f.requester_id = auth.uid() and f.addressee_id = other)
+      or (f.requester_id = other and f.addressee_id = auth.uid())));
+$$;
+
+create table if not exists public.mf_stories (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.mf_profiles(id) on delete cascade,
+  preview    text not null,                      -- LQIP
+  caption    text not null default '',
+  w          int,
+  h          int,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '24 hours'
+);
+create index if not exists mf_stories_active_idx on public.mf_stories (expires_at, user_id);
+alter table public.mf_stories enable row level security;
+create policy "mf_stories_select" on public.mf_stories for select
+  using (auth.uid() = user_id or public.mf_is_friend(user_id));
+create policy "mf_stories_insert" on public.mf_stories for insert with check (auth.uid() = user_id);
+create policy "mf_stories_delete" on public.mf_stories for delete using (auth.uid() = user_id);
+
+create table if not exists public.mf_story_views (
+  story_id  uuid not null references public.mf_stories(id) on delete cascade,
+  viewer_id uuid not null references public.mf_profiles(id) on delete cascade,
+  viewed_at timestamptz not null default now(),
+  primary key (story_id, viewer_id)
+);
+alter table public.mf_story_views enable row level security;
+-- you can see a view-row if it's yours, or if you authored the story it's on
+create policy "mf_story_views_select" on public.mf_story_views for select using (
+  auth.uid() = viewer_id
+  or auth.uid() = (select user_id from public.mf_stories s where s.id = story_id)
+);
+create policy "mf_story_views_insert" on public.mf_story_views for insert with check (auth.uid() = viewer_id);
+
+-- ---------------------------------------------------------------------------
+-- Realtime: recipients get new snaps live; senders learn when a snap was opened
+-- (row deleted) so they can drop their local copy; friends see requests + stories live.
+-- ---------------------------------------------------------------------------
+alter publication supabase_realtime add table public.mf_snaps;
+alter publication supabase_realtime add table public.mf_friends;
+alter publication supabase_realtime add table public.mf_stories;

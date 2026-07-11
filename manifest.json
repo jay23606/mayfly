@@ -1,0 +1,13 @@
+{
+  "name": "mayfly",
+  "short_name": "mayfly",
+  "description": "Snaps that live for a day, then vanish. Full photos stream peer-to-peer or are end-to-end encrypted — never stored in the clear.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

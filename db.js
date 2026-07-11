@@ -1,0 +1,66 @@
+import { sb, state } from './core.js';
+
+// ===================== data access (all mf_-prefixed) =====================
+const PROF = 'id, username, avatar, pubkey';
+const db = {
+    // ---- profiles ----
+    myProfile: () => sb.from('mf_profiles').select('*').eq('id', state.me.id).maybeSingle(),
+    profile:   (username) => sb.from('mf_profiles').select('*').eq('username', username).maybeSingle(),
+    profileById: (id) => sb.from('mf_profiles').select(PROF).eq('id', id).maybeSingle(),
+    updateProfile: (patch) => sb.from('mf_profiles').update(patch).eq('id', state.me.id),
+    upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
+    searchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).neq('id', state.me.id).limit(30),
+
+    // ---- friends (symmetric: one row per pair, either direction) ----
+    friends: () => sb.from('mf_friends')
+        .select('*, requester:requester_id(' + PROF + '), addressee:addressee_id(' + PROF + ')')
+        .eq('status', 'accepted').or(`requester_id.eq.${state.me.id},addressee_id.eq.${state.me.id}`),
+    incomingRequests: () => sb.from('mf_friends')
+        .select('*, requester:requester_id(' + PROF + ')')
+        .eq('status', 'pending').eq('addressee_id', state.me.id).order('created_at', { ascending: false }),
+    outgoingRequests: () => sb.from('mf_friends')
+        .select('addressee_id').eq('status', 'pending').eq('requester_id', state.me.id),
+    friendState: (otherId) => sb.from('mf_friends').select('*')
+        .or(`and(requester_id.eq.${state.me.id},addressee_id.eq.${otherId}),and(requester_id.eq.${otherId},addressee_id.eq.${state.me.id})`)
+        .maybeSingle(),
+    sendRequest:  (addressee_id) => sb.from('mf_friends').insert({ requester_id: state.me.id, addressee_id, status: 'pending' }),
+    acceptRequest: (requester_id) => sb.from('mf_friends').update({ status: 'accepted' })
+        .match({ requester_id, addressee_id: state.me.id, status: 'pending' }),
+    // works for decline / cancel / unfriend regardless of direction
+    removeFriend: (otherId) => sb.from('mf_friends').delete()
+        .or(`and(requester_id.eq.${state.me.id},addressee_id.eq.${otherId}),and(requester_id.eq.${otherId},addressee_id.eq.${state.me.id})`),
+
+    // ---- snaps ----
+    // inbox: unopened snaps sent to me, newest first, with sender profile
+    inbox: () => sb.from('mf_snaps')
+        .select('*, sender:sender_id(' + PROF + ')')
+        .eq('recipient_id', state.me.id).is('viewed_at', null)
+        .order('created_at', { ascending: false }),
+    // pending (unopened) relay snaps I've sent to one recipient — for the offline cap
+    pendingRelayTo: (recipient_id) => sb.from('mf_snaps')
+        .select('id', { count: 'exact', head: true })
+        .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
+        .eq('delivery', 'relay').is('viewed_at', null),
+    addSnap: (row) => sb.from('mf_snaps').insert(row).select().maybeSingle(),
+    delSnap: (id) => sb.from('mf_snaps').delete().eq('id', id),
+    // snaps I sent that have now been opened / expired → clean up my device copies
+    mySpentSnaps: () => sb.from('mf_snaps').select('id').eq('sender_id', state.me.id),
+
+    // ---- streaks (atomic bump via SECURITY DEFINER fn; canonicalizes the pair) ----
+    bumpStreak: (other) => sb.rpc('mf_bump_streak', { other }),
+    streaks: () => sb.from('mf_streaks').select('*')
+        .or(`user_a.eq.${state.me.id},user_b.eq.${state.me.id}`).gt('count', 0),
+
+    // ---- stories (24h, friends-only; RLS returns mine + friends' automatically) ----
+    addStory: (row) => sb.from('mf_stories').insert(row).select().maybeSingle(),
+    activeStories: () => sb.from('mf_stories').select('*, author:user_id(' + PROF + ')')
+        .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }),
+    myStories: () => sb.from('mf_stories').select('id').eq('user_id', state.me.id),
+    delStory: (id) => sb.from('mf_stories').delete().eq('id', id),
+    viewStory: (story_id) => sb.from('mf_story_views').upsert({ story_id, viewer_id: state.me.id }),
+    myViewedStories: () => sb.from('mf_story_views').select('story_id').eq('viewer_id', state.me.id),
+    storyViewers: (story_id) => sb.from('mf_story_views')
+        .select('viewed_at, viewer:viewer_id(' + PROF + ')').eq('story_id', story_id).order('viewed_at', { ascending: false }),
+};
+
+export { db };

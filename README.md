@@ -29,9 +29,15 @@ Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses th
 
 Runs entirely client-side — the publishable key in `core.js` is public-safe because every table is protected by Row Level Security.
 
+## Also built
+
+- **Stories** — 24h posts visible to friends, replayable, with a viewer list (full image P2P, LQIP fallback).
+- **Chat** — ephemeral P2P DMs: text, **voice notes**, and photo/video/file attachments (nothing on the server).
+- **Video calls** — 1:1 P2P video/voice (WebRTC), plus **group mesh calls**.
+- **Group chats** — persistent membership (`mf_groups`), ephemeral Realtime Broadcast text on member-only `mfgroup:` channels, full P2P mesh video.
+- **Google sign-in** — `signInWithOAuth` (requires enabling the Google provider in your Supabase project).
+
 ## Roadmap
 
-- **Stories** — 24h posts visible to all friends (same LQIP + P2P pattern, viewer list).
-- **Chat** — ephemeral P2P DMs (port instamegle's `dm.js`).
-- **Scheduled cleanup** — an Edge Function cron to sweep expired relay blobs/rows server-side (today it's lazy client-side cleanup).
+- **Scheduled cleanup** — an Edge Function cron to sweep expired relay blobs/rows + stories server-side (today it's lazy client-side cleanup).
 - **TURN** — relay creds so live P2P works on cellular / symmetric NAT.

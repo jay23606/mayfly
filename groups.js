@@ -126,11 +126,6 @@ const sendGroupMedia = async (gp, file, snap = false) => {
         gp.pending.push({ media, name: 'You' });
     }
 };
-export const sendGroupSnap = (groupId, file) => {
-    const gp = current && current.id === groupId ? current : backgrounds.get(groupId);
-    if (!gp) return toast('Group is not ready yet.');
-    return sendGroupMedia(gp, file, true);
-};
 
 // ---- mesh video ----
 const tileFor = (gp, uid, stream, name, isLocal) => {

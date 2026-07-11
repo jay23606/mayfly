@@ -5,7 +5,7 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
-import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendGroupSnap } from './groups.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
@@ -64,7 +64,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         <input id="file" type="file" accept="image/*,video/*" hidden>
       </div>
     </main>`;
-    const finishShot = (shot) => groupId ? composeGroupSnap(shot, groupId) : compose(shot, defaultRecipientId);
+    const finishShot = (shot) => compose(shot, defaultRecipientId, groupId);
     $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
@@ -145,7 +145,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
 
 // ===================== compose: caption, timer, choose friends, send =====================
 let timer = 5;
-const compose = async (shot, defaultRecipientId = null) => {
+const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) => {
     stopStream();
     const isVideo = shot.mime?.startsWith('video/');
     if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
@@ -178,15 +178,17 @@ const compose = async (shot, defaultRecipientId = null) => {
         });
     }
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
-    const chosen = new Set();
+    const chosen = new Set(), chosenGroups = new Set();
     let toStory = false;
     const send = $('#send');
-    const refreshSend = () => { const n = chosen.size + (toStory ? 1 : 0); send.disabled = !n; send.textContent = n ? `Send ▸` : 'Send ▸'; };
-    const { data: friends } = await db.friends();
+    const refreshSend = () => { const n = chosen.size + chosenGroups.size + (toStory ? 1 : 0); send.disabled = !n; send.textContent = n ? `Send ▸` : 'Send ▸'; };
+    const [{ data: friends }, { data: groups }] = await Promise.all([db.friends(), db.myGroups()]);
     const box = $('#recips'); if (!box) return;
     const list = (friends || []).map(f => otherOf(f)).filter(Boolean);
+    const groupList = groups || [];
     // A Snap started from a chat or a friend row keeps that person selected.
     if (list.some(u => u.id === defaultRecipientId)) chosen.add(defaultRecipientId);
+    if (groupList.some(g => g.id === defaultGroupId)) chosenGroups.add(defaultGroupId);
     box.innerHTML = '';
     // "My Story" — broadcast to all friends for 24h (always available)
     const storyChip = el(`<button class="recip story"><span class="ring">⚡</span><span>My Story</span></button>`);
@@ -195,6 +197,11 @@ const compose = async (shot, defaultRecipientId = null) => {
         toStory = !toStory; storyChip.classList.toggle('on', toStory); refreshSend();
     };
     box.appendChild(storyChip);
+    groupList.forEach(g => {
+        const chip = el(`<button class="recip ${chosenGroups.has(g.id) ? 'on' : ''}"><span class="avatar">👥</span><span>${esc(g.name || 'Group')}</span></button>`);
+        chip.onclick = () => { chip.classList.toggle('on'); chosenGroups.has(g.id) ? chosenGroups.delete(g.id) : chosenGroups.add(g.id); refreshSend(); };
+        box.appendChild(chip);
+    });
     if (!list.length) box.appendChild(el(`<div class="empty" style="width:100%">No friends yet — <a href="#/friends">add some →</a> or just post to your Story.</div>`));
     list.forEach(u => {
         const chip = el(`<button class="recip ${chosen.has(u.id) ? 'on' : ''}" data-uid="${u.id}">${avatarHTML(u.username, u.avatar)}<span>${esc(u.username)}</span>${isOnline(u.id) ? '<i class="dot"></i>' : ''}</button>`);
@@ -209,43 +216,20 @@ const compose = async (shot, defaultRecipientId = null) => {
     send.onclick = async () => {
         send.disabled = true; send.textContent = 'Sending…';
         const caption = $('#cap').value.trim();
-        const targets = list.filter(u => chosen.has(u.id));
+        const directTargets = list.filter(u => chosen.has(u.id));
+        const groupIds = new Set(groupList.filter(g => chosenGroups.has(g.id)).flatMap(g => (g.mf_group_members || []).map(m => m.user_id)).filter(id => id !== state.me.id));
+        const known = new Map(directTargets.map(u => [u.id, u]));
+        const missing = [...groupIds].filter(id => !known.has(id));
+        const loaded = await Promise.all(missing.map(async id => (await db.profileById(id)).data));
+        loaded.filter(Boolean).forEach(u => known.set(u.id, u));
+        const targets = [...new Map([...directTargets, ...[...groupIds].map(id => known.get(id)).filter(Boolean)].map(u => [u.id, u])).values()];
         let ok = 0, blocked = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
-        location.hash = defaultRecipientId ? '#/c/' + defaultRecipientId : '#/chats';
-    };
-};
-
-// A group Snap uses the same camera, but sends one view-once item to the group.
-const composeGroupSnap = async (shot, groupId) => {
-    stopStream();
-    const isVideo = shot.mime?.startsWith('video/');
-    const previewUrl = isVideo ? (shot.localPreviewUrl || shot.full) : shot.full;
-    const releasePreview = () => { if (shot.localPreviewUrl) URL.revokeObjectURL(shot.localPreviewUrl); };
-    app.innerHTML = `<main class="composewrap">
-      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
-        ${isVideo ? `<video src="${safeMediaUrl(previewUrl)}" autoplay muted loop playsinline></video>` : ''}
-        <button class="retake" id="retake" aria-label="Retake">✕</button>
-      </div>
-      <div class="sendrow">
-        <div class="sendto">Send a ${isVideo ? 'video' : 'photo'} Snap to this group</div>
-        <button class="btn send" id="gsend">Send Snap ▸</button>
-      </div>
-    </main>`;
-    $('#retake').onclick = () => { releasePreview(); viewCamera(null, groupId); };
-    $('#gsend').onclick = async () => {
-        const button = $('#gsend'); button.disabled = true; button.textContent = 'Sending…';
-        const mime = shot.mime || 'image/jpeg';
-        const file = shot.rawBlob
-            ? new File([shot.rawBlob], 'group-snap.' + (isVideo ? 'webm' : 'jpg'), { type: mime })
-            : new File([await dataUrlToBytes(shot.full)], 'group-snap.jpg', { type: mime });
-        await sendGroupSnap(groupId, file);
-        releasePreview();
-        location.hash = '#/group/' + groupId;
+        location.hash = defaultRecipientId ? '#/c/' + defaultRecipientId : (defaultGroupId ? '#/group/' + defaultGroupId : '#/chats');
     };
 };
 

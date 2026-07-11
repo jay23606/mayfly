@@ -61,6 +61,22 @@ const db = {
     myViewedStories: () => sb.from('mf_story_views').select('story_id').eq('viewer_id', state.me.id),
     storyViewers: (story_id) => sb.from('mf_story_views')
         .select('viewed_at, viewer:viewer_id(' + PROF + ')').eq('story_id', story_id).order('viewed_at', { ascending: false }),
+
+    // ---- groups (persistent named group chats + mesh calls) ----
+    createGroup: async (name, memberIds) => {
+        const { data: g, error } = await sb.from('mf_groups').insert({ name, created_by: state.me.id }).select().single();
+        if (error) return { error };
+        const rows = [...new Set([state.me.id, ...memberIds])].map(uid => ({ group_id: g.id, user_id: uid }));
+        const { error: e2 } = await sb.from('mf_group_members').insert(rows);
+        return { data: g, error: e2 };
+    },
+    myGroups: () => sb.from('mf_groups')
+        .select('*, mf_group_members(user_id, profiles:mf_profiles!mf_group_members_user_id_fkey(username, avatar))')
+        .order('created_at', { ascending: false }),
+    groupById: (gid) => sb.from('mf_groups')
+        .select('*, mf_group_members(user_id, profiles:mf_profiles!mf_group_members_user_id_fkey(username, avatar))').eq('id', gid).single(),
+    addGroupMember: (gid, uid) => sb.from('mf_group_members').insert({ group_id: gid, user_id: uid }),
+    leaveGroup: (gid) => sb.from('mf_group_members').delete().match({ group_id: gid, user_id: state.me.id }),
 };
 
 export { db };

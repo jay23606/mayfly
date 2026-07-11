@@ -19,7 +19,7 @@ const drain = (dc) => new Promise(res => { const t = () => (dc.bufferedAmount > 
 const sendBinary = async (dc, buf) => { for (let o = 0; o < buf.byteLength; o += CHUNK) { try { dc.send(buf.slice(o, o + CHUNK)); } catch (e) { return; } await drain(dc); } };
 
 let signalCh = null;
-let onDataConn = null;
+let onDataConn = null, onMediaConn = null;
 const conns = new Map();
 const signalSend = (to, msg) => { try { signalCh && signalCh.send({ type: 'broadcast', event: 'sig', payload: { to, from: state.me.id, ...msg } }); } catch (e) {} };
 const emitter = () => { const L = {}; return {
@@ -71,21 +71,59 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
     return api;
 };
 
-const peer = { connect: (userId, opts = {}) => makeDataConn(userId, rand(), true, opts.metadata) };
+// Media (video/voice call) connection — same PeerJS-shaped surface as instamegle.
+const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
+    const ev = emitter(); const pc = new RTCPeerConnection(ICE);
+    let remoteSet = false, closed = false; const pend = [];
+    const fireClose = () => { if (closed) return; closed = true; conns.delete(cid); ev.emit('close'); };
+    const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
+    const api = {
+        peer: remote, metadata,
+        on(e, fn) { ev.on(e, fn); return api; },
+        answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
+        close() { try { pc.close(); } catch (e) {} conns.delete(cid); },
+    };
+    pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'media', ice: e.candidate }); };
+    pc.ontrack = (e) => ev.emit('stream', e.streams[0]);
+    let discT = null;
+    pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === 'connected') { clearTimeout(discT); discT = null; }
+        else if (s === 'disconnected') { clearTimeout(discT); discT = setTimeout(fireClose, 8000); }
+        else if (s === 'failed' || s === 'closed') { clearTimeout(discT); fireClose(); }
+    };
+    if (initiator) {
+        addTracks(stream);
+        pc.createOffer().then(o => pc.setLocalDescription(o))
+          .then(() => signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription, metadata }));
+    }
+    conns.set(cid, { handleSignal: async (msg) => {
+        if (msg.sdp) { await pc.setRemoteDescription(msg.sdp); remoteSet = true; pend.splice(0).forEach(c => pc.addIceCandidate(c).catch(() => {})); }
+        else if (msg.ice) { remoteSet ? pc.addIceCandidate(msg.ice).catch(() => {}) : pend.push(msg.ice); }
+    } });
+    return api;
+};
+
+const peer = {
+    connect: (userId, opts = {}) => makeDataConn(userId, rand(), true, opts.metadata),
+    call: (userId, stream, opts = {}) => makeMediaConn(userId, rand(), true, opts.metadata, stream),
+};
 
 const onSignal = (p) => {
     if (!p || p.to !== state.me.id) return;
     let entry = conns.get(p.cid);
     if (!entry) {
-        if (!p.sdp || p.sdp.type !== 'offer' || p.kind !== 'data') return;   // stray candidate/answer
-        const c = makeDataConn(p.from, p.cid, false, p.metadata); onDataConn && onDataConn(c);
+        if (!p.sdp || p.sdp.type !== 'offer') return;   // stray candidate/answer for a dead conn
+        if (p.kind === 'data') { const c = makeDataConn(p.from, p.cid, false, p.metadata); onDataConn && onDataConn(c); }
+        else if (p.kind === 'media') { const c = makeMediaConn(p.from, p.cid, false, p.metadata); onMediaConn && onMediaConn(c); }
         entry = conns.get(p.cid);
     }
     entry && entry.handleSignal(p);
 };
 
-const startRtc = (dmHandler) => new Promise((resolve) => {
-    // Incoming connection is either a live chat (metadata.kind==='dm') or someone
+const startRtc = (dmHandler, callHandler) => new Promise((resolve) => {
+    onMediaConn = callHandler;   // incoming video calls (1:1 or a group-mesh leg)
+    // Incoming data connection is either a live chat (metadata.kind==='dm') or someone
     // asking for the full image of a snap/story we sent them (kept in our IndexedDB
     // under snap:<id> / story:<id>). Serve the JPEG as raw binary, then done.
     onDataConn = (c) => {

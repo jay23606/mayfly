@@ -15,6 +15,19 @@
 <body>
     <div id="app"></div>
     <div id="toast" class="toast"></div>
+    <div id="incall"></div>
+    <div id="callo">
+      <div class="stagev">
+        <video id="rv" autoplay playsinline></video>
+        <video id="lv" autoplay muted playsinline></video>
+        <div class="cstat" id="cstat"></div>
+      </div>
+      <div class="cbar">
+        <button id="cmute" title="Mute mic" aria-label="Mute microphone">🎙️</button>
+        <button id="ccam" title="Toggle camera" aria-label="Toggle camera">📷</button>
+        <button class="hang" id="chang" title="Hang up" aria-label="Hang up">📵</button>
+      </div>
+    </div>
     <script type="module" src="app.js"></script>
 </body>
 </html>

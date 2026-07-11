@@ -188,3 +188,54 @@ create policy "mf_story_views_insert" on public.mf_story_views for insert with c
 alter publication supabase_realtime add table public.mf_snaps;
 alter publication supabase_realtime add table public.mf_friends;
 alter publication supabase_realtime add table public.mf_stories;
+
+-- ---------------------------------------------------------------------------
+-- Groups: persistent named group chats + mesh video calls. Group TEXT is ephemeral
+-- Realtime Broadcast (never stored); group VIDEO is a full P2P mesh. Only membership
+-- lives in Postgres.
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_groups (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null default '',
+  created_by uuid not null references public.mf_profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.mf_group_members (
+  group_id uuid not null references public.mf_groups(id) on delete cascade,
+  user_id  uuid not null references public.mf_profiles(id) on delete cascade,
+  added_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+create index if not exists mf_group_members_user_idx on public.mf_group_members (user_id);
+
+-- security definer avoids RLS recursion on mf_group_members
+create or replace function public.mf_is_group_member(gid uuid, uid uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from public.mf_group_members where group_id = gid and user_id = uid);
+$$;
+
+alter table public.mf_groups enable row level security;
+alter table public.mf_group_members enable row level security;
+-- creator can read their group even before the member row exists (so insert…select works)
+create policy "mf_groups_select" on public.mf_groups for select using (public.mf_is_group_member(id, auth.uid()) or auth.uid() = created_by);
+create policy "mf_groups_insert" on public.mf_groups for insert with check (auth.uid() = created_by);
+create policy "mf_groups_delete" on public.mf_groups for delete using (auth.uid() = created_by);
+create policy "mf_gm_select" on public.mf_group_members for select using (public.mf_is_group_member(group_id, auth.uid()));
+create policy "mf_gm_insert" on public.mf_group_members for insert with check (
+  public.mf_is_group_member(group_id, auth.uid())
+  or auth.uid() = (select created_by from public.mf_groups g where g.id = group_id));
+create policy "mf_gm_delete" on public.mf_group_members for delete using (
+  user_id = auth.uid() or auth.uid() = (select created_by from public.mf_groups g where g.id = group_id));
+
+-- Realtime Authorization: private "mfgroup:<uuid>" channels are member-only. A distinct
+-- prefix (not instamegle's "group:") keeps the two apps' realtime.messages policies from
+-- interacting in this shared project. (Public channels — presence/signal/stories — don't
+-- consult realtime.messages, so they're unaffected.)
+drop policy if exists "mf_group_read" on realtime.messages;
+create policy "mf_group_read" on realtime.messages for select to authenticated using (
+  realtime.topic() like 'mfgroup:%'
+  and public.mf_is_group_member((substring(realtime.topic() from 9))::uuid, auth.uid()));
+drop policy if exists "mf_group_write" on realtime.messages;
+create policy "mf_group_write" on realtime.messages for insert to authenticated with check (
+  realtime.topic() like 'mfgroup:%'
+  and public.mf_is_group_member((substring(realtime.topic() from 9))::uuid, auth.uid()));

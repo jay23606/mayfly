@@ -4,7 +4,8 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { openChat, renderChatList, onIncomingDM, detachAll, chatUnread } from './chat.js';
+import { openChat, renderChatList, onIncomingDM, onIncomingCall, detachAll, chatUnread } from './chat.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, renderGroupList, closeCurrentGroup } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
@@ -387,9 +388,16 @@ const renderFriends = async () => {
 
 // ===================== chat list =====================
 const viewChatList = () => {
-    app.innerHTML = `<main><h3 class="vtitle">Chat</h3>
-      <p class="muted tiny" style="margin:0 2px 8px">Messages are live peer-to-peer and never stored on a server.</p>
+    app.innerHTML = `<main>
+      <h3 class="vtitle">Chat</h3>
+      <p class="muted tiny" style="margin:0 2px 8px">Messages & calls are live peer-to-peer, never stored on a server.</p>
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">Groups
+        <button class="pill primary" id="newgroup">＋ New group</button></div>
+      <div id="grouplist"></div>
+      <div class="section-title">Friends</div>
       <div id="chatlist"><div class="spin">Loading…</div></div></main>`;
+    $('#newgroup').onclick = () => createGroupFlow();
+    renderGroupList($('#grouplist'));
     renderChatList($('#chatlist'));
 };
 
@@ -453,10 +461,12 @@ const route = () => {
     const seg = parts[1], arg = parts[2];
     stopStream();
     detachAll();               // leaving any chat view → background msgs go to notifications
+    closeCurrentGroup();        // leaving a group view → tear its channel/call down
     mountChrome();
     if (seg === 'inbox') return viewInbox();
     if (seg === 'friends') return viewFriends();
     if (seg === 'chat') return arg ? openChat(arg) : viewChatList();
+    if (seg === 'group' && arg) return openGroupById(arg);
     if (seg === 'me') return viewMe();
     return viewCamera();
 };
@@ -519,11 +529,17 @@ const viewGate = () => {
             <div class="err" id="ae"></div>
             <button class="btn" id="go">${mode === 'up' ? 'Sign up' : 'Log in'}</button>
           </form>
+          <div class="orline"><span>or</span></div>
+          <button class="btn google" id="google"><span class="gg">G</span> Continue with Google</button>
           <div class="swap">${mode === 'up' ? 'Have an account?' : "New here?"}
             <button class="btn ghost inline" id="swap">${mode === 'up' ? 'Log in' : 'Sign up'}</button></div>
         </div>`;
         $('#swap').onclick = () => { mode = mode === 'up' ? 'in' : 'up'; render(); };
         $('#af').onsubmit = submit;
+        $('#google').onclick = async () => {
+            const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } });
+            if (error) $('#ae').textContent = error.message;
+        };
     };
     const submit = async (e) => {
         e.preventDefault();
@@ -561,7 +577,7 @@ const enterApp = async (session) => {
     const username = prof?.username || state.me.user_metadata?.username || ('user_' + state.me.id.slice(0, 8));
     const { data: saved } = await db.upsertProfile({ username, pubkey: JSON.stringify(pubJwk), avatar: prof?.avatar || '' });
     state.profile = saved || prof || { username };
-    await startRtc(onIncomingDM);
+    await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c));
     startPresence();
     startRealtime();
     sweepLocal();

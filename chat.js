@@ -213,14 +213,19 @@ const openSnap = async (s, card) => {
     if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
     const u = s.sender || {};
     const video = snapMime(s).startsWith('video/');
-    const media = video ? `<video src="${safeMediaUrl(full)}" autoplay playsinline></video>` : `<img src="${safeMediaUrl(full)}" alt="snap">`;
+    const media = video ? `<video src="${safeMediaUrl(full)}" autoplay muted controls playsinline></video>` : `<img src="${safeMediaUrl(full)}" alt="snap">`;
     const ov = el(`<div class="player">${media}${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
     document.body.appendChild(ov);
     requestAnimationFrame(() => { const bar = $('.pbar i', ov); bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); });
     let done = false;
     const finish = async () => { if (done) return; done = true; clearTimeout(t); ov.remove(); if (full.startsWith('blob:')) URL.revokeObjectURL(full); await burnSnap(s, card); };
     const t = setTimeout(finish, s.timer * 1000);
-    if (video) $('video', ov).onended = finish;
+    if (video) {
+        const v = $('video', ov);
+        v.onended = finish;
+        v.onclick = (e) => e.stopPropagation();
+        v.play().catch(() => {});
+    }
     ov.onclick = finish;
 };
 const burnSnap = async (s, card) => {

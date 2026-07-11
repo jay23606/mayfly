@@ -91,7 +91,15 @@ const processVideo = async (blob) => {
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
     try {
-        await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+        await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = rej; });
+        // The first recorder frame is commonly black. Seek slightly into the clip before
+        // drawing the still used by the inbox and compose preview.
+        if (Number.isFinite(v.duration) && v.duration > 0.1) {
+            v.currentTime = Math.min(0.1, v.duration / 2);
+            await new Promise((res, rej) => { v.onseeked = res; v.onerror = rej; });
+        } else {
+            await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+        }
         const preview = scaleTo(v, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
         const full = await bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), mime);
         return { preview, full, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration };

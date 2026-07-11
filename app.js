@@ -161,6 +161,8 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
       </div>
       <div class="sendrow">
         <div class="sendto">Send to…</div>
+        <input id="recipsearch" class="recipsearch" type="search" placeholder="Search friends" autocomplete="off" aria-label="Search friends">
+        <div id="recipmeta" class="recipmeta"></div>
         <div id="recips" class="recips"><div class="spin">Loading friends…</div></div>
         <button class="btn send" id="send" disabled>Send ▸</button>
       </div>
@@ -179,44 +181,92 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
     }
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
     const chosen = new Set(), chosenGroups = new Set();
-    let toStory = false;
+    const RECENT_FRIEND_LIMIT = 50;
+    const ALL_FRIENDS_LIMIT = 100;
+    let toStory = false, allFriends = false;
     const send = $('#send');
-    const refreshSend = () => { const n = chosen.size + chosenGroups.size + (toStory ? 1 : 0); send.disabled = !n; send.textContent = n ? `Send ▸` : 'Send ▸'; };
     const [{ data: friends }, { data: groups }] = await Promise.all([db.friends(), db.myGroups()]);
     const box = $('#recips'); if (!box) return;
-    const list = (friends || []).map(f => otherOf(f)).filter(Boolean);
+    const list = (friends || []).map(f => {
+        const friend = otherOf(f);
+        return friend && { ...friend, friendSince: f.created_at };
+    }).filter(Boolean).sort((a, b) => new Date(b.friendSince) - new Date(a.friendSince));
     const groupList = groups || [];
+    const selectedFriendIds = () => allFriends
+        ? list.slice(0, ALL_FRIENDS_LIMIT).map(u => u.id)
+        : [...chosen];
+    const selectedRecipientIds = () => new Set([
+        ...selectedFriendIds(),
+        ...groupList.filter(g => chosenGroups.has(g.id))
+            .flatMap(g => (g.mf_group_members || []).map(m => m.user_id))
+            .filter(id => id !== state.me.id),
+    ]);
+    const refreshSend = () => {
+        const recipientCount = selectedRecipientIds().size;
+        const n = recipientCount + (toStory ? 1 : 0);
+        send.disabled = !n;
+        send.textContent = n ? `Send to ${n} ▸` : 'Send ▸';
+    };
     // A Snap started from a chat or a friend row keeps that person selected.
     if (list.some(u => u.id === defaultRecipientId)) chosen.add(defaultRecipientId);
     if (groupList.some(g => g.id === defaultGroupId)) chosenGroups.add(defaultGroupId);
-    box.innerHTML = '';
-    // "My Story" — broadcast to all friends for 24h (always available)
-    const storyChip = el(`<button class="recip story"><span class="ring">⚡</span><span>My Story</span></button>`);
-    storyChip.onclick = () => {
-        if (isVideo) return toast('Video snaps can be sent directly to friends, not to Stories yet.');
-        toStory = !toStory; storyChip.classList.toggle('on', toStory); refreshSend();
-    };
-    box.appendChild(storyChip);
-    groupList.forEach(g => {
-        const chip = el(`<button class="recip ${chosenGroups.has(g.id) ? 'on' : ''}"><span class="avatar">👥</span><span>${esc(g.name || 'Group')}</span></button>`);
-        chip.onclick = () => { chip.classList.toggle('on'); chosenGroups.has(g.id) ? chosenGroups.delete(g.id) : chosenGroups.add(g.id); refreshSend(); };
-        box.appendChild(chip);
-    });
-    if (!list.length) box.appendChild(el(`<div class="empty" style="width:100%">No friends yet — <a href="#/friends">add some →</a> or just post to your Story.</div>`));
-    list.forEach(u => {
-        const chip = el(`<button class="recip ${chosen.has(u.id) ? 'on' : ''}" data-uid="${u.id}">${avatarHTML(u.username, u.avatar)}<span>${esc(u.username)}</span>${isOnline(u.id) ? '<i class="dot"></i>' : ''}</button>`);
-        chip.onclick = () => {
-            chip.classList.toggle('on');
-            chosen.has(u.id) ? chosen.delete(u.id) : chosen.add(u.id);
-            refreshSend();
+    const search = $('#recipsearch');
+    const meta = $('#recipmeta');
+    const renderRecipients = () => {
+        const query = search.value.trim().toLowerCase();
+        const matches = query ? list.filter(u => u.username.toLowerCase().includes(query)) : list;
+        const visible = matches.slice(0, RECENT_FRIEND_LIMIT);
+        box.innerHTML = '';
+        // "My Story" — broadcast to all friends for 24h (always available)
+        const storyChip = el(`<button class="recip story ${toStory ? 'on' : ''}"><span class="ring">⚡</span><span>My Story</span></button>`);
+        storyChip.onclick = () => {
+            if (isVideo) return toast('Video snaps can be sent directly to friends, not to Stories yet.');
+            toStory = !toStory; renderRecipients(); refreshSend();
         };
-        box.appendChild(chip);
-    });
+        box.appendChild(storyChip);
+        groupList.forEach(g => {
+            const chip = el(`<button class="recip ${chosenGroups.has(g.id) ? 'on' : ''}"><span class="avatar">👥</span><span>${esc(g.name || 'Group')}</span></button>`);
+            chip.onclick = () => {
+                chosenGroups.has(g.id) ? chosenGroups.delete(g.id) : chosenGroups.add(g.id);
+                renderRecipients(); refreshSend();
+            };
+            box.appendChild(chip);
+        });
+        if (list.length) {
+            const allChip = el(`<button class="recip allfriends ${allFriends ? 'on' : ''}"><span class="avatar">👥</span><span>All friends${list.length > ALL_FRIENDS_LIMIT ? ` (first ${ALL_FRIENDS_LIMIT})` : ''}</span></button>`);
+            allChip.onclick = () => {
+                allFriends = !allFriends;
+                if (allFriends) chosen.clear();
+                renderRecipients(); refreshSend();
+            };
+            box.appendChild(allChip);
+        }
+        if (!list.length) box.appendChild(el(`<div class="empty" style="width:100%">No friends yet — <a href="#/friends">add some →</a> or just post to your Story.</div>`));
+        visible.forEach(u => {
+            const chip = el(`<button class="recip ${chosen.has(u.id) ? 'on' : ''}" data-uid="${u.id}">${avatarHTML(u.username, u.avatar)}<span>${esc(u.username)}</span>${isOnline(u.id) ? '<i class="dot"></i>' : ''}</button>`);
+            chip.onclick = () => {
+                allFriends = false;
+                chosen.has(u.id) ? chosen.delete(u.id) : chosen.add(u.id);
+                renderRecipients(); refreshSend();
+            };
+            box.appendChild(chip);
+        });
+        if (matches.length > RECENT_FRIEND_LIMIT) {
+            box.appendChild(el(`<div class="recipmore">Showing ${RECENT_FRIEND_LIMIT} of ${matches.length}${query ? ' matches' : ' recent friends'} — search to narrow the list.</div>`));
+        }
+        meta.textContent = allFriends && list.length > ALL_FRIENDS_LIMIT
+            ? `All-friends sends are limited to your ${ALL_FRIENDS_LIMIT} most recent friends at a time.`
+            : (query ? `${matches.length} friend${matches.length === 1 ? '' : 's'} found` : `Showing your ${Math.min(RECENT_FRIEND_LIMIT, list.length)} most recent friends`);
+    };
+    search.oninput = renderRecipients;
+    renderRecipients();
     refreshSend();
     send.onclick = async () => {
-        send.disabled = true; send.textContent = 'Sending…';
+        const directIds = selectedFriendIds();
+        if (allFriends && list.length > ALL_FRIENDS_LIMIT && !confirm(`Send this Snap to your ${ALL_FRIENDS_LIMIT} most recent friends? You have ${list.length} friends total, so the rest will not receive this one.`)) return;
+        send.disabled = true;
         const caption = $('#cap').value.trim();
-        const directTargets = list.filter(u => chosen.has(u.id));
+        const directTargets = list.filter(u => directIds.includes(u.id));
         const groupIds = new Set(groupList.filter(g => chosenGroups.has(g.id)).flatMap(g => (g.mf_group_members || []).map(m => m.user_id)).filter(id => id !== state.me.id));
         const known = new Map(directTargets.map(u => [u.id, u]));
         const missing = [...groupIds].filter(id => !known.has(id));
@@ -225,7 +275,18 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
         const targets = [...new Map([...directTargets, ...[...groupIds].map(id => known.get(id)).filter(Boolean)].map(u => [u.id, u])).values()];
         let ok = 0, blocked = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
-        for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
+        const SEND_BATCH_SIZE = 5;
+        let done = 0;
+        for (let i = 0; i < targets.length; i += SEND_BATCH_SIZE) {
+            const batch = targets.slice(i, i + SEND_BATCH_SIZE);
+            send.textContent = `Sending ${done + 1}–${Math.min(done + batch.length, targets.length)} of ${targets.length}…`;
+            const results = await Promise.all(batch.map(u => sendSnap(shot, u, caption, timer)));
+            results.forEach((r, index) => {
+                if (r === true) { ok++; noteSentSnap(batch[index].id); }
+                else if (r === 'cap') blocked++;
+            });
+            done += batch.length;
+        }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();

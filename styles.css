@@ -96,12 +96,16 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .retake{position:absolute;top:12px;right:12px;width:40px;height:40px;border-radius:50%;border:0;background:#000000aa;color:#fff;font-size:18px;cursor:pointer}
 .sendrow{margin-top:6px}
 .sendto{font-size:13px;color:var(--muted);margin:6px 2px}
-.recips{display:flex;flex-wrap:wrap;gap:8px;min-height:40px}
+.recipsearch{width:100%;box-sizing:border-box;margin:4px 0 6px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font:inherit;outline:none}
+.recipsearch:focus{border-color:var(--accent)}
+.recipmeta{min-height:18px;margin:0 2px 6px;color:var(--muted);font-size:12px}
+.recips{display:flex;flex-wrap:wrap;gap:8px;min-height:40px;max-height:242px;overflow-y:auto;align-content:flex-start;padding:1px 2px 4px}
 .recip{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);color:var(--text);
   border-radius:999px;padding:6px 14px 6px 6px;cursor:pointer;font-weight:600}
 .recip .avatar{width:28px;height:28px;font-size:13px}
 .recip i.dot{margin:0}
 .recip.on{background:var(--grad);color:#0a0a0f;border:0}
+.recipmore{width:100%;color:var(--muted);font-size:12px;padding:5px 2px}
 .send{margin-top:14px}
 
 /* ---------- view-once player ---------- */

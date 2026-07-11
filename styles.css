@@ -252,6 +252,9 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 
 /* ---------- unified conversations (Snapchat-style) ---------- */
 main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - var(--tab-h));overflow:hidden}
+/* chat views drop the app header and fill the whole screen (sidebar flush left) */
+body.inchat header{display:none}
+body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding-top:env(safe-area-inset-top)}
 .convlist{width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .convlist .storiesbar{padding:10px 10px 12px}
 .grouphead,.convhead{display:flex;justify-content:space-between;align-items:center;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:12px 12px 4px;font-weight:700}

@@ -18,7 +18,6 @@ const startPresence = () => {
         const st = presenceCh.presenceState();
         for (const k in presenceUsers) delete presenceUsers[k];
         for (const key in st) for (const m of st[key]) if (m.user_id) presenceUsers[m.user_id] = { username: m.username };
-        const o = $('#online'); if (o) o.textContent = Object.keys(presenceUsers).length + ' online';
         if ($('#friendlist')) renderFriends();   // refresh online dots
         reconnectOpenChat();                      // connect an open chat once the friend comes online
     });
@@ -589,13 +588,15 @@ const tabbar = () => `<nav id="tabbar" aria-label="Primary">
     <button class="tab cam" data-go="#/camera" aria-label="Camera">◉</button>
     <button class="tab" data-go="#/me" aria-label="You">${isMediaUrl(state.profile.avatar) ? `<span class="navavatar"><img src="${state.profile.avatar}" alt=""></span>` : `<span class="navavatar">${initial(state.profile.username)}</span>`}</button>
   </nav>`;
-const header = () => `<header><span class="logo" data-go="#/chats">mayfly 🐛</span><div class="grow"></div><span id="online" class="muted">…</span></header>`;
+const header = () => `<header><span class="logo" data-go="#/chats">mayfly 🐛</span></header>`;
 const mountChrome = (force) => {
     if (!state.profile) return;
     if (force) document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
     const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
+    // Chat views reclaim the top: hide the app header so the sidebar + thread fill the screen.
+    document.body.classList.toggle('inchat', seg === '' || seg === 'chats' || seg === 'c' || seg === 'group');
     const activeGo = (seg === '' || seg === 'c' || seg === 'group') ? '#/chats' : ((seg === 'snap' || seg === 'groupsnap') ? '#/camera' : ('#/' + seg));
     $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo));
 };

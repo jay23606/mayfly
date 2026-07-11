@@ -100,12 +100,18 @@ const viewCamera = (defaultRecipientId = null) => {
         if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
         const chunks = [];
         const preview = captureVideoPreview();
-        try { recorder = new MediaRecorder(stream); }
+        // Safari commonly records MP4 while Chromium records WebM. Pick a declared
+        // container up front so the Blob is not mislabeled as WebM on Safari.
+        const recordingMime = [
+            'video/mp4;codecs=avc1.42E01E', 'video/mp4',
+            'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm',
+        ].find(type => MediaRecorder.isTypeSupported(type));
+        try { recorder = new MediaRecorder(stream, recordingMime ? { mimeType: recordingMime } : undefined); }
         catch (e) { return toast('Could not start video recording.'); }
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
             shoot.classList.remove('recording');
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+            const blob = new Blob(chunks, { type: recorder.mimeType || recordingMime || 'video/webm' });
             recorder = null;
             if (!blob.size) return;
             try {

@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial, ago,
-    avatarHTML, safeMediaUrl, chunkString, mimeKind } from './core.js';
+    avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
 import { encryptText, decryptText, decryptWith } from './crypto.js';
@@ -115,7 +115,7 @@ export const renderConvs = async (box, activeUid) => {
             ${avatarHTML(u.username, u.avatar)}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
-            <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">◉</span></button>`);
+            <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">${icon('camera', 20)}</span></button>`);
         $('.camicon', row).onclick = (e) => { e.preventDefault(); e.stopPropagation(); location.hash = '#/snap/' + u.id; };
         box.appendChild(row);
     });
@@ -134,21 +134,20 @@ export const openConversation = async (box, uid) => {
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           ${avatarHTML(username, prof?.avatar)}
           <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${isOnline(uid) ? 'active now' : 'offline'}</div></div>
-          <button class="icon callbtn" aria-label="Video call">📹</button>
+          <button class="icon callbtn" aria-label="Call">${icon('phone')}</button>
         </div>
         <div class="tbody" id="tbody"><div class="spin">…</div></div>
         <div class="ctyping" id="ctyping"></div>
         <div class="voicepreview" hidden></div>
         <form class="tin">
-          <button type="button" class="icon snapbtn" aria-label="Send a snap">◉</button>
-          <button type="button" class="icon attach" aria-label="Attach">📎</button>
-          <button type="button" class="icon mic" aria-label="Voice note">🎤</button>
-          <input class="tinput" placeholder="Send a chat" autocomplete="off" aria-label="Message">
-          <button type="submit" class="sendbtn" aria-label="Send">➤</button>
+          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" aria-label="Message">
+          <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
+          <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
+          <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
           <input type="file" class="fileinput" hidden>
         </form>
       </div>`;
-    $('.callbtn', box).onclick = () => callUser(uid, username);
+    $('.callbtn', box).onclick = (e) => callMenu(e.currentTarget, (video) => callUser(uid, username, video));
     $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
     const fileInput = $('.fileinput', box);
     $('.attach', box).onclick = () => fileInput.click();
@@ -332,35 +331,58 @@ export const reconnectOpenChat = () => { if (openUid) ensureConn(openUid); };
 export const detachAll = () => { openUid = null; threadBox = null; };
 export const bootChat = async () => { await refreshInbox(); await syncMessages(); };
 
-// ===================== 1:1 video calling =====================
-const getMedia = () => navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-let localStream = null, curCall = null;
+// ===================== 1:1 calling (video or voice) =====================
+const getMedia = (video) => navigator.mediaDevices.getUserMedia({ video: !!video, audio: true });
+let localStream = null, curCall = null, callPeerName = '';
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
+// swap a control button's glyph + dim (red) it when the track is off
+const setCtl = (btn, on, onName, offName) => { if (!btn) return; btn.innerHTML = icon(on ? onName : offName); btn.classList.toggle('off', !on); };
+// A small popover anchored to the header call button: pick a video or voice call.
+export const callMenu = (anchor, pick) => {
+    document.querySelector('.callmenu')?.remove();
+    const m = el(`<div class="callmenu"><button class="cmi" data-v="1">${icon('video')}<span>Video call</span></button><button class="cmi" data-v="0">${icon('phone')}<span>Voice call</span></button></div>`);
+    const r = anchor.getBoundingClientRect();
+    m.style.top = (r.bottom + 6) + 'px'; m.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    document.body.appendChild(m);
+    const close = () => { m.remove(); document.removeEventListener('click', onDoc, true); };
+    const onDoc = (e) => { if (!m.contains(e.target) && e.target !== anchor) close(); };
+    setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+    m.querySelectorAll('.cmi').forEach(b => b.onclick = () => { close(); pick(b.dataset.v === '1'); });
+};
+const openCallStage = (video) => {
+    $('#callo').classList.toggle('voice', !video);
+    $('#ccam').style.display = video ? '' : 'none';   // no camera toggle on a voice call
+    $('#lv').srcObject = localStream;
+};
 const endCall = () => {
     try { curCall?.close(); } catch (e) {} curCall = null;
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     const rv = $('#rv'), lv = $('#lv'); if (rv) rv.srcObject = null; if (lv) lv.srcObject = null;
-    $('#cmute').style.opacity = $('#ccam').style.opacity = '1';
-    $('#callo').classList.remove('on');
+    setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff');
+    $('#callo').classList.remove('on', 'voice');
 };
-const wireCallMedia = (c) => { curCall = c; c.on('stream', (s) => { $('#rv').srcObject = s; setStat(''); }); c.on('close', endCall); c.on('error', endCall); };
-export const callUser = async (uid, username) => {
+const wireCallMedia = (c) => { curCall = c; c.on('stream', (s) => { $('#rv').srcObject = s; setStat($('#callo').classList.contains('voice') ? callPeerName : ''); }); c.on('close', endCall); c.on('error', endCall); };
+export const callUser = async (uid, username, video = true) => {
     if (!isOnline(uid)) return toast(username + ' is offline.');
     if (curCall) return toast('Already in a call.');
-    try { localStream = await getMedia(); } catch (e) { return toast('Camera/mic blocked'); }
-    $('#lv').srcObject = localStream; $('#callo').classList.add('on'); setStat('Calling ' + username + '…');
-    wireCallMedia(peer.call(uid, localStream, { metadata: { username: state.profile.username } }));
+    try { localStream = await getMedia(video); } catch (e) { return toast('Camera/mic blocked'); }
+    callPeerName = username;
+    openCallStage(video); $('#callo').classList.add('on'); setStat((video ? 'Calling ' : 'Ringing ') + username + '…');
+    wireCallMedia(peer.call(uid, localStream, { metadata: { username: state.profile.username, video } }));
 };
 export const onIncomingCall = (incoming) => {
     if (curCall) return incoming.close();
     const username = incoming.metadata?.username || 'Someone';
+    const video = incoming.metadata?.video !== false;
+    callPeerName = username;
     const banner = $('#incall');
-    banner.innerHTML = `<div class="avatar ib">${initial(username)}</div><div style="flex:1"><b>${esc(username)}</b><div class="muted" style="font-size:12px">Incoming video call…</div></div><button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button>`;
+    banner.innerHTML = `<div class="avatar ib">${initial(username)}</div><div style="flex:1"><b>${esc(username)}</b><div class="muted" style="font-size:12px">Incoming ${video ? 'video' : 'voice'} call…</div></div><button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button>`;
     banner.classList.add('on');
     const clear = () => banner.classList.remove('on');
     $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };
-    $('#acc', banner).onclick = async () => { clear(); try { localStream = await getMedia(); } catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; } $('#lv').srcObject = localStream; $('#callo').classList.add('on'); setStat('Connecting…'); incoming.answer(localStream); wireCallMedia(incoming); };
+    $('#acc', banner).onclick = async () => { clear(); try { localStream = await getMedia(video); } catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; } openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…'); incoming.answer(localStream); wireCallMedia(incoming); };
 };
 $('#chang').onclick = endCall;
-$('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; $('#cmute').style.opacity = a.enabled ? '1' : '.4'; } };
-$('#ccam').onclick = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; $('#ccam').style.opacity = v.enabled ? '1' : '.4'; } };
+$('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setCtl($('#cmute'), a.enabled, 'mic', 'micOff'); } };
+$('#ccam').onclick = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setCtl($('#ccam'), v.enabled, 'video', 'videoOff'); } };
+setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');

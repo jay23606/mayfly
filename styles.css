@@ -163,7 +163,9 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .chathead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
 .chathead .back{font-size:26px}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
-.icon{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px}
+.icon{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center}
+.ic{display:block;flex:none}
+.icon.off{color:#ff3b5c}
 .chatlog{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
 .b{max-width:78%;padding:9px 13px;border-radius:16px;font-size:15px;word-wrap:break-word}
 .b.me{align-self:flex-end;background:var(--grad);color:#08080c;border-bottom-right-radius:5px}
@@ -193,8 +195,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .chatmedia{max-width:220px;max-height:280px;border-radius:14px;display:block}
 .chatfile{display:inline-block;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:14px}
 .b audio{height:38px}
-.chatin .attach,.chatin .mic{font-size:20px;align-self:center}
-.chatin .mic.recording{color:#ff3b5c;animation:pulse 1s infinite}
+.tin .mic.recording{color:#ff3b5c;animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.4}}
 
 /* ---------- 1:1 video call ---------- */
@@ -210,8 +211,18 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 #lv{position:absolute;right:14px;bottom:14px;width:110px;height:150px;object-fit:contain;background:#111;border-radius:14px;border:2px solid #ffffff33}
 .cstat{position:absolute;left:0;right:0;top:40%;text-align:center;color:#fff;font-size:16px;text-shadow:0 1px 6px #000}
 .cbar{display:flex;justify-content:center;gap:22px;padding:20px 0 calc(24px + env(safe-area-inset-bottom))}
-.cbar button{width:60px;height:60px;border-radius:50%;border:0;background:#ffffff1c;color:#fff;font-size:24px;cursor:pointer}
-.cbar .hang{background:#ff3b5c}
+.cbar button{width:60px;height:60px;border-radius:50%;border:0;background:#ffffff1c;color:#fff;cursor:pointer}
+.cbar .hang{background:#ff3b5c;color:#fff}
+/* voice call: no video, show a calm gradient + the peer's name */
+#callo.voice{background:linear-gradient(160deg,#1b1436,#0a0a12)}
+#callo.voice #rv,#callo.voice #lv{display:none}
+#callo.voice .cstat{top:38%;font-size:22px;font-weight:600}
+/* video/voice picker popover */
+.callmenu{position:fixed;z-index:160;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px;
+  box-shadow:0 14px 34px #000a;display:flex;flex-direction:column;gap:2px;min-width:172px}
+.cmi{display:flex;align-items:center;gap:10px;background:none;border:0;color:var(--text);padding:10px 12px;border-radius:10px;cursor:pointer;font-size:15px;font-weight:600;text-align:left}
+.cmi:hover{background:var(--panel2)}
+.cmi .ic{color:var(--accent2)}
 
 /* ---------- groups (mesh video + avatars) ---------- */
 .gavatars{display:flex}
@@ -226,6 +237,12 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .gtile video{width:100%;height:100%;object-fit:cover}
 .gname{position:absolute;left:6px;bottom:6px;color:#fff;font-size:11px;text-shadow:0 1px 4px #000}
 .icon.ring{animation:pulse 1s infinite;color:var(--accent2)}
+/* group in-call controls */
+.gcallbar{display:none;justify-content:center;gap:18px;padding:10px 0;background:#000}
+.chatview.group.incall .gcallbar{display:flex}
+.gcallbar button{width:52px;height:52px;border-radius:50%;background:#ffffff1c;color:#fff}
+.gcallbar .hang{background:#ff3b5c;color:#fff}
+.chatview.group.voicecall .gcam{display:none}
 
 /* ---------- modal (people picker) ---------- */
 .modal{position:fixed;inset:0;z-index:120;background:#000000aa;display:flex;align-items:center;justify-content:center;padding:16px}
@@ -246,7 +263,7 @@ main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - va
 .conv .sub{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .conv.unread .sub.hot{color:var(--text);font-weight:600}
 .conv.unread .who b{font-weight:800}
-.camicon{font-size:20px;color:var(--muted);padding:4px 6px;flex:none}
+.camicon{display:inline-flex;align-items:center;color:var(--muted);padding:4px 6px;flex:none}
 
 .threadpane{display:none;flex:1;min-width:0;flex-direction:column}
 .threadempty{margin:auto;color:var(--muted);padding:24px;text-align:center}
@@ -274,7 +291,6 @@ main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - va
 .voicepreview .vsend{background:var(--grad);color:#08080c}
 .tinput{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:10px 16px;outline:none;font-size:16px}
 .tinput:focus{border-color:var(--accent)}
-.sendbtn{background:var(--grad);color:#08080c;border:0;border-radius:50%;width:40px;height:40px;font-size:15px;cursor:pointer;flex:none}
 
 main.chats.showthread .convlist{display:none}
 main.chats.showthread .threadpane{display:flex}

@@ -1,5 +1,6 @@
-import { app, $, $$, el, esc, toast, state, initial, avatarHTML, safeMediaUrl, mimeKind, sb, isOnline } from './core.js';
+import { app, $, $$, el, esc, toast, state, initial, avatarHTML, safeMediaUrl, mimeKind, sb, isOnline, icon } from './core.js';
 import { peer } from './rtc.js';
+import { callMenu } from './chat.js';
 import { db } from './db.js';
 
 // ===================== group chats + mesh video calls =====================
@@ -152,13 +153,16 @@ const meshUpdate = (gp) => {
         if (state.me.id > uid) wireGroupPeer(gp, uid, peer.call(uid, gp.call.localStream, { metadata: { group: gp.id } }));
     }
 };
-const joinCall = async (gp) => {
+const setGCtl = (gp, sel, on, onName, offName) => { const b = gp.node && $(sel, gp.node); if (b) { b.innerHTML = icon(on ? onName : offName); b.classList.toggle('off', !on); } };
+const joinCall = async (gp, video = true) => {
     if (gp.call) return;
-    let stream; try { stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch (e) { return toast('Camera/mic blocked'); }
-    gp.call = { localStream: stream, peers: new Map() };
+    let stream; try { stream = await navigator.mediaDevices.getUserMedia({ video: !!video, audio: true }); } catch (e) { return toast('Camera/mic blocked'); }
+    gp.call = { localStream: stream, peers: new Map(), video: !!video };
     gp.node.classList.add('incall');
+    gp.node.classList.toggle('voicecall', !video);
     tileFor(gp, state.me.id, stream, 'You', true);
-    $('.gcall', gp.node).textContent = '📵';
+    setGCtl(gp, '.gmute', true, 'mic', 'micOff');
+    setGCtl(gp, '.gcam', true, 'video', 'videoOff');
     await gp.ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: true });
     meshUpdate(gp);
 };
@@ -166,10 +170,8 @@ const leaveCall = (gp) => {
     if (!gp.call) return;
     gp.call.peers.forEach(c => { try { c.close(); } catch (e) {} });
     gp.call.localStream.getTracks().forEach(t => t.stop());
-    $('.gvideos', gp.node).innerHTML = '';
-    gp.node.classList.remove('incall');
+    if (gp.node) { $('.gvideos', gp.node).innerHTML = ''; gp.node.classList.remove('incall', 'voicecall'); }
     gp.call = null;
-    const b = $('.gcall', gp.node); if (b) b.textContent = '📹';
     gp.ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false });
 };
 // incoming mesh leg (auto-answered if we're in that group's call)
@@ -186,7 +188,7 @@ const updatePresence = (gp) => {
     const o = gp.node && $('.gonline', gp.node); if (o) o.textContent = `${Object.keys(st).length} online`;
     const othersInCall = Object.keys(st).some(k => k !== state.me.id && st[k].some(m => m.in_call));
     const btn = gp.node && $('.gcall', gp.node);
-    if (gp.node && othersInCall && !gp.call && !gp.notified) { gSys(gp, 'Video call in progress — tap 📹 to join'); gp.notified = true; btn?.classList.add('ring'); }
+    if (gp.node && othersInCall && !gp.call && !gp.notified) { gSys(gp, 'Call in progress — tap the call button to join'); gp.notified = true; btn?.classList.add('ring'); }
     if (!othersInCall) { gp.notified = false; btn?.classList.remove('ring'); }
     if (gp.call) meshUpdate(gp);
     syncGroupDataPeers(gp);
@@ -280,18 +282,22 @@ const openGroup = (group) => {
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           <div class="gavatars">${avs || '👥'}</div>
           <div class="who"><b>${esc(group.name || 'Group')}</b><div class="sub gonline">…</div></div>
-          <button class="icon gadd" aria-label="Add friend">＋</button>
-          <button class="icon gcall" aria-label="Group video call">📹</button>
+          <button class="icon gadd" aria-label="Add friend to group">${icon('userPlus')}</button>
+          <button class="icon gcall" aria-label="Start a group call">${icon('phone')}</button>
         </div>
         <div class="gvideos"></div>
+        <div class="gcallbar">
+          <button class="icon gmute" aria-label="Mute microphone"></button>
+          <button class="icon gcam" aria-label="Toggle camera"></button>
+          <button class="icon ghang hang" aria-label="Leave call">${icon('phoneOff')}</button>
+        </div>
         <div class="chatlog"></div>
         <div class="grecord" hidden><span>● Recording voice clip…</span><button type="button" class="gcancel">Cancel</button><button type="button" class="gstop">Send</button></div>
         <form class="chatin groupin">
-          <button type="button" class="icon gsnap" aria-label="Send a Snap">◉</button>
-          <button type="button" class="icon gattach" aria-label="Attach a file">📎</button>
-          <button type="button" class="icon gmic" aria-label="Record voice clip">🎤</button>
-          <input class="ginput" placeholder="Message the group…" autocomplete="off" aria-label="Message">
-          <button type="submit">Send</button>
+          <input class="ginput" placeholder="Message the group…" autocomplete="off" enterkeyhint="send" aria-label="Message">
+          <button type="button" class="icon gattach" aria-label="Attach a file">${icon('paperclip')}</button>
+          <button type="button" class="icon gmic" aria-label="Record voice clip">${icon('mic')}</button>
+          <button type="button" class="icon gsnap" aria-label="Send a Snap">${icon('camera')}</button>
           <input class="gfile" type="file" hidden>
         </form>
       </main>`;
@@ -310,7 +316,10 @@ const openGroup = (group) => {
     ch.on('presence', { event: 'sync' }, () => updatePresence(gp));
     ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
 
-    $('.gcall', gp.node).onclick = () => gp.call ? leaveCall(gp) : joinCall(gp);
+    $('.gcall', gp.node).onclick = (e) => gp.call ? leaveCall(gp) : callMenu(e.currentTarget, (video) => joinCall(gp, video));
+    $('.gmute', gp.node).onclick = () => { const a = gp.call?.localStream.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setGCtl(gp, '.gmute', a.enabled, 'mic', 'micOff'); } };
+    $('.gcam', gp.node).onclick = () => { const v = gp.call?.localStream.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setGCtl(gp, '.gcam', v.enabled, 'video', 'videoOff'); } };
+    $('.ghang', gp.node).onclick = () => leaveCall(gp);
     $('.gadd', gp.node).onclick = () => pickFriends('Add to group', {
         exclude: new Set(Object.keys(members)),
         onPick: async (uid, username) => { const { error } = await db.addGroupMember(gp.id, uid); if (error) return toast('Could not add'); gp.members[uid] = { username }; gSys(gp, `${username} was added`); },

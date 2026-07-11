@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { esc, rand, ago, initial, isMediaUrl, safeMediaUrl, chunkString, mimeKind, makeLru } from './util.js';
+import { esc, rand, ago, initial, isMediaUrl, safeMediaUrl, chunkString, mimeKind, makeLru, icon } from './util.js';
 
 // ===================== config =====================
 // mayfly rides the SAME shared Supabase project as instamegle, but every table is
@@ -133,4 +133,4 @@ const isOnline = (uid) => !!presenceUsers[uid];
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
     processImage, processCanvas, processVideo, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
-    isMediaUrl, safeMediaUrl, chunkString, mimeKind, state, presenceUsers, fullCache, isOnline };
+    isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, fullCache, isOnline };

@@ -37,6 +37,13 @@ const startCamera = async () => {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
+        // Request audio separately so denying microphone access never blocks photos.
+        // If granted, its track is added to this stream and MediaRecorder captures it.
+        const cameraStream = stream;
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((mic) => {
+            if (stream !== cameraStream) return mic.getTracks().forEach(t => t.stop());
+            mic.getAudioTracks().forEach(t => cameraStream.addTrack(t));
+        }).catch(() => {});
     } catch (e) {
         $('#camerr').innerHTML = 'Camera unavailable. <b>Tap the photo icon</b> to pick from your gallery instead.';
     }

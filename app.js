@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { openChat, renderChatList, onIncomingDM, onIncomingCall, detachAll, chatUnread } from './chat.js';
+import { openChat, renderChatList, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, renderGroupList, closeCurrentGroup } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -20,6 +20,7 @@ const startPresence = () => {
         for (const key in st) for (const m of st[key]) if (m.user_id) presenceUsers[m.user_id] = { username: m.username };
         const o = $('#online'); if (o) o.textContent = Object.keys(presenceUsers).length + ' online';
         if ($('#friendlist')) renderFriends();   // refresh online dots
+        reconnectOpenChat();                      // connect an open chat once the friend comes online
     });
     presenceCh.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') await presenceCh.track({ user_id: state.me.id, username: state.profile.username });
@@ -318,37 +319,53 @@ const burn = async (s, row) => {
 const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.requester;
 let streakMap = {};
 const pairKey = (x, y) => [x, y].sort().join('|');
+const HIDDEN_KEY = 'mf_hidden';
+const getHidden = () => { try { return new Set(JSON.parse(localStorage[HIDDEN_KEY] || '[]')); } catch { return new Set(); } };
+const hideUser = (uid) => { const h = getHidden(); h.add(uid); localStorage[HIDDEN_KEY] = JSON.stringify([...h]); };
 const viewFriends = () => {
     app.innerHTML = `<main>
       <h3 class="vtitle">Friends</h3>
-      <input class="field searchbar" id="usearch" placeholder="Add a friend by username…" autocomplete="off">
+      <input class="field searchbar" id="usearch" placeholder="Search people by username…" autocomplete="off">
       <div id="reqs"></div>
-      <div id="friendlist"><div class="spin">Loading…</div></div>
+      <div id="friendlist"></div>
+      <div class="section-title">Add people</div>
+      <div id="discover"><div class="spin">Loading…</div></div>
     </main>`;
     const s = $('#usearch'); let t;
-    s.oninput = () => { clearTimeout(t); t = setTimeout(() => searchAdd(s.value.trim()), 220); };
+    s.oninput = () => { clearTimeout(t); t = setTimeout(() => renderDiscover(s.value.trim()), 220); };
     renderRequests();
     renderFriends();
+    renderDiscover('');
 };
-const searchAdd = async (q) => {
-    const box = $('#friendlist'); if (!box) return;
-    if (!q) return renderFriends();
-    const { data } = await db.searchProfiles(q);
-    box.innerHTML = `<div class="section-title">Results</div>`;
-    if (!data || !data.length) return void box.appendChild(el(`<div class="empty">No one matched “${esc(q)}”.</div>`));
-    for (const p of data) {
-        const st = await db.friendState(p.id);
-        const rel = st.data ? st.data.status : null;   // 'accepted' | 'pending' | null
-        const row = el(`<div class="urow">${avatarHTML(p.username, p.avatar)}
-            <div class="who"><b>${esc(p.username)}</b></div>
-            <button class="pill ${rel ? '' : 'primary'} addbtn" ${rel ? 'disabled' : ''}>${rel === 'accepted' ? 'Friends' : rel === 'pending' ? 'Pending' : 'Add'}</button></div>`);
+// Discover: up to 50 people you can add — Add sends a request, ✕ hides them for good.
+// Already-friends / pending-either-way / hidden people are filtered out.
+const renderDiscover = async (q) => {
+    const box = $('#discover'); if (!box) return;
+    const [{ data: profs }, { data: fr }, { data: out }, { data: inc }] = await Promise.all([
+        q ? db.searchProfiles(q) : db.allProfiles(),
+        db.friends(), db.outgoingRequests(), db.incomingRequests(),
+    ]);
+    if (!$('#discover')) return;
+    const exclude = getHidden(); exclude.add(state.me.id);
+    (fr || []).forEach(f => exclude.add(f.requester_id === state.me.id ? f.addressee_id : f.requester_id));
+    (out || []).forEach(o => exclude.add(o.addressee_id));
+    (inc || []).forEach(i => exclude.add(i.requester_id));
+    const list = (profs || []).filter(p => !exclude.has(p.id));
+    box.innerHTML = '';
+    if (!list.length) return void (box.innerHTML = `<div class="empty">${q ? 'No one matched that.' : 'No new people to add right now.'}</div>`);
+    list.forEach(p => {
+        const row = el(`<div class="urow" data-uid="${p.id}">${avatarHTML(p.username, p.avatar)}
+            <div class="who"><b>${esc(p.username)}</b>${isOnline(p.id) ? '<div class="sub"><i class="dot"></i>online</div>' : ''}</div>
+            <div class="acts"><button class="pill primary addbtn">Add</button><button class="pill hidebtn" aria-label="Hide">✕</button></div></div>`);
         $('.addbtn', row).onclick = async () => {
+            const b = $('.addbtn', row); b.disabled = true;
             const { error } = await db.sendRequest(p.id);
-            if (error) return toast('Could not send request.');
-            $('.addbtn', row).textContent = 'Pending'; $('.addbtn', row).disabled = true; $('.addbtn', row).classList.remove('primary');
+            if (error) { b.disabled = false; return toast('Could not send request.'); }
+            b.textContent = 'Requested'; b.classList.remove('primary');
         };
+        $('.hidebtn', row).onclick = () => { hideUser(p.id); row.remove(); if (!$('#discover .urow')) box.innerHTML = `<div class="empty">No more people to add.</div>`; };
         box.appendChild(row);
-    }
+    });
 };
 const renderRequests = async () => {
     const box = $('#reqs'); if (!box) return;
@@ -374,7 +391,7 @@ const renderFriends = async () => {
     (stk || []).forEach(s => streakMap[pairKey(s.user_a, s.user_b)] = s.count);
     const friends = (fr || []).map(otherOf).filter(Boolean);
     box.innerHTML = `<div class="section-title">Your friends</div>`;
-    if (!friends.length) return void box.appendChild(el(`<div class="empty">No friends yet — search above to add someone.</div>`));
+    if (!friends.length) return void box.appendChild(el(`<div class="empty">No friends yet — add someone from <b>Add people</b> below.</div>`));
     friends.forEach(u => {
         const streak = streakMap[pairKey(state.me.id, u.id)] || 0;
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}

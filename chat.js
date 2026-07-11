@@ -9,7 +9,11 @@ import { db } from './db.js';
 // Live-only: both people must be online, matching mayfly's ephemeral spirit.
 const chats = new Map();          // uid -> { conn, username, logEl|null, binOk, sendQ }
 const unread = new Set();
+let openUid = null;               // uid of the conversation currently on screen
 export const chatUnread = () => unread.size;
+// Called on every presence sync: if the person we're chatting with just came online
+// (and we're not connected yet), establish the P2P link now.
+export const reconnectOpenChat = () => { if (openUid) { const c = chats.get(openUid); if (!(c?.conn && c.conn.open) && isOnline(openUid)) { ensureConn(openUid, c?.username); setDot(openUid, false); } } };
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
 
 const hist = (uid) => idb.get('chat:' + uid).then(h => h || []);
@@ -84,6 +88,7 @@ const setTyping = (uid, t) => { const v = viewOf(uid); const e = v && $('.ctypin
 const ensureConn = (uid, username) => { const c = chats.get(uid); if (c?.conn && c.conn.open) return; if (!isOnline(uid)) return; wire(uid, username, peer.connect(uid, { metadata: { kind: 'dm', user_id: state.me.id, username: state.profile.username } })); };
 
 export const openChat = async (uid) => {
+    openUid = uid;
     let username = chats.get(uid)?.username;
     if (!username) { const { data } = await db.profileById(uid); username = data?.username || 'friend'; }
     unread.delete(uid); onChange();
@@ -106,6 +111,7 @@ export const openChat = async (uid) => {
     const logEl = $('.chatlog');
     const c = chats.get(uid) || { username }; c.username = username; c.logEl = logEl; chats.set(uid, c);
     (await hist(uid)).forEach(m => m.kind ? mediaBubble(logEl, m, m.me ? 'me' : 'them') : bubble(logEl, m.text, m.me ? 'me' : 'them'));
+    if (!isOnline(uid)) bubble(logEl, `${username} is offline. Chat is live peer-to-peer — messages send once you're both online.`, 'sys');
     ensureConn(uid, username);
     $('.callbtn').onclick = () => callUser(uid, username);
     const form = $('.chatin'), textInput = $('.chatin input:not(.fileinput)'), fileInput = $('.fileinput'); let tt;
@@ -132,7 +138,7 @@ export const openChat = async (uid) => {
 };
 
 export const detachChat = (uid) => { const c = chats.get(uid); if (c) c.logEl = null; };
-export const detachAll = () => chats.forEach(c => c.logEl = null);
+export const detachAll = () => { openUid = null; chats.forEach(c => c.logEl = null); };
 
 export const renderChatList = async (into) => {
     const { data: fr } = await db.friends();

@@ -9,7 +9,8 @@ const db = {
     profileById: (id) => sb.from('mf_profiles').select(PROF).eq('id', id).maybeSingle(),
     updateProfile: (patch) => sb.from('mf_profiles').update(patch).eq('id', state.me.id),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
-    searchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).neq('id', state.me.id).limit(30),
+    searchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
+    allProfiles: () => sb.from('mf_profiles').select(PROF).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),
 
     // ---- friends (symmetric: one row per pair, either direction) ----
     friends: () => sb.from('mf_friends')

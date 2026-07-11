@@ -34,16 +34,7 @@ const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
     try {
-        // Request camera and microphone together so MediaRecorder receives one
-        // synchronized stream. Keep the video-only fallback for a denied mic.
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: facing },
-                audio: { echoCancellation: true, noiseSuppression: true },
-            });
-        } catch (audioError) {
-            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
-        }
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
     } catch (e) {

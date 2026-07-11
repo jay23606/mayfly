@@ -1,4 +1,4 @@
-import { app, $, $$, el, esc, toast, state, initial, avatarHTML, sb, isOnline } from './core.js';
+import { app, $, $$, el, esc, toast, state, initial, avatarHTML, safeMediaUrl, mimeKind, sb, isOnline } from './core.js';
 import { peer } from './rtc.js';
 import { db } from './db.js';
 
@@ -14,6 +14,92 @@ const gLine = (gp, html) => { const l = $('.chatlog', gp.node); if (!l) return; 
 const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
 const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
+
+// ---- group P2P media (files, clips, and view-once snaps) ----
+const MEDIA_MAX = 20 * 1024 * 1024;
+const gid = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+const waitDrain = async (conn) => {
+    const dc = conn?.dataChannel; if (!dc) return;
+    while (dc.bufferedAmount > 4 * 1024 * 1024) await new Promise(r => setTimeout(r, 25));
+};
+const sendGroupBytes = async (conn, bytes) => {
+    const dc = conn?.dataChannel; if (!dc) return;
+    for (let o = 0, i = 0; o < bytes.byteLength; o += 16384, i++) {
+        try { dc.send(bytes.slice(o, o + 16384)); } catch (e) { return false; }
+        if (i % 32 === 0) await waitDrain(conn);
+    }
+    return true;
+};
+const groupMediaBubble = (gp, media, cls, name = '') => {
+    const url = safeMediaUrl(media.url);
+    const inner = media.kind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
+        : media.kind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
+        : media.kind === 'audio' ? `<audio src="${url}" controls></audio>`
+        : `<a class="chatfile" href="${url}" download="${esc(media.name || 'file')}">📎 ${esc(media.name || 'file')}</a>`;
+    gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}</div>`);
+};
+const groupSnapCard = (gp, media, cls, name = '') => {
+    const card = el(`<button class="snapcard ${media.kind === 'video' ? 'video' : 'photo'} ${cls}"><span class="sq">${media.kind === 'video' ? '▶' : '●'}</span> Tap to view ${media.kind === 'video' ? 'Video' : 'Photo'} Snap</button>`);
+    if (cls === 'them') card.insertAdjacentHTML('afterbegin', `<span class="gwho">${esc(name)}</span>`);
+    card.onclick = () => {
+        const tag = media.kind === 'video' ? `<video src="${safeMediaUrl(media.url)}" autoplay muted playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="snap">`;
+        const ov = el(`<div class="player">${tag}<div class="pbar"><i></i></div></div>`);
+        document.body.appendChild(ov);
+        const finish = () => { clearTimeout(t); ov.remove(); URL.revokeObjectURL(media.url); card.remove(); };
+        const t = setTimeout(finish, 5000);
+        ov.onclick = finish;
+        if (media.kind === 'video') $('video', ov).onended = finish;
+    };
+    $('.chatlog', gp.node)?.appendChild(card);
+    $('.chatlog', gp.node).scrollTop = $('.chatlog', gp.node).scrollHeight;
+};
+const wireGroupData = (gp, uid, conn) => {
+    if (gp.dataPeers.has(uid)) { try { conn.close(); } catch (e) {} return; }
+    gp.dataPeers.set(uid, conn);
+    let incoming = null;
+    conn.on('data', (d) => {
+        if (!d) return;
+        if (d.t === 'gmedia-meta') { incoming = { meta: d, chunks: [] }; return; }
+        if (d.t === 'gmedia-done' && incoming?.meta.id === d.id) {
+            const item = incoming; incoming = null;
+            const blob = new Blob(item.chunks, { type: item.meta.mime || '' });
+            const media = { ...item.meta, url: URL.createObjectURL(blob) };
+            if (media.snap) groupSnapCard(gp, media, 'them', item.meta.nameFrom);
+            else groupMediaBubble(gp, media, 'them', item.meta.nameFrom);
+        }
+    });
+    conn.on('chunk', (ab) => { if (incoming) incoming.chunks.push(ab); });
+    conn.on('close', () => { if (gp.dataPeers.get(uid) === conn) gp.dataPeers.delete(uid); });
+    conn.on('error', () => { if (gp.dataPeers.get(uid) === conn) gp.dataPeers.delete(uid); });
+};
+const syncGroupDataPeers = (gp) => {
+    const st = gp.ch?.presenceState?.() || {};
+    for (const uid of Object.keys(st)) {
+        if (uid === state.me.id || !gp.members[uid] || gp.dataPeers.has(uid)) continue;
+        if (state.me.id > uid) wireGroupData(gp, uid, peer.connect(uid, { metadata: { kind: 'group', group: gp.id, user_id: state.me.id } }));
+    }
+};
+export const onIncomingGroupData = (conn) => {
+    const gp = current && current.id === conn.metadata?.group ? current : null;
+    if (!gp || !gp.members[conn.peer]) return conn.close();
+    wireGroupData(gp, conn.peer, conn);
+};
+const sendGroupMedia = async (gp, file, snap = false) => {
+    if (!file) return;
+    if (file.size > MEDIA_MAX) return toast(`Media is too large (max ${Math.round(MEDIA_MAX / 1e6)} MB).`);
+    syncGroupDataPeers(gp);
+    const peers = [...gp.dataPeers.values()].filter(c => c.open);
+    if (!peers.length) return toast('Group members need this chat open to receive media.');
+    const kind = mimeKind(file.type), id = gid(), bytes = await file.arrayBuffer();
+    const meta = { t: 'gmedia-meta', id, bytes: bytes.byteLength, mime: file.type, kind, name: file.name || kind, nameFrom: state.profile.username, snap };
+    await Promise.all(peers.map(async (conn) => {
+        conn.send(meta);
+        const sent = await sendGroupBytes(conn, bytes);
+        if (sent) conn.send({ t: 'gmedia-done', id });
+    }));
+    const media = { ...meta, url: URL.createObjectURL(file) };
+    if (snap) groupSnapCard(gp, media, 'me'); else groupMediaBubble(gp, media, 'me');
+};
 
 // ---- mesh video ----
 const tileFor = (gp, uid, stream, name, isLocal) => {
@@ -77,12 +163,39 @@ const updatePresence = (gp) => {
     if (othersInCall && !gp.call && !gp.notified) { gSys(gp, 'Video call in progress — tap 📹 to join'); gp.notified = true; btn?.classList.add('ring'); }
     if (!othersInCall) { gp.notified = false; btn?.classList.remove('ring'); }
     if (gp.call) meshUpdate(gp);
+    syncGroupDataPeers(gp);
+};
+
+const wireGroupMic = (gp) => {
+    let recorder = null, stream = null, chunks = [], cancelled = false;
+    const mic = $('.gmic', gp.node), recordBar = $('.grecord', gp.node);
+    const reset = () => { mic.classList.remove('recording'); recordBar.hidden = true; };
+    const stop = () => { if (recorder?.state === 'recording') recorder.stop(); };
+    mic.onclick = async () => {
+        if (recorder?.state === 'recording') return stop();
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+        catch (e) { return toast('Microphone access is blocked.'); }
+        chunks = []; cancelled = false;
+        try { recorder = new MediaRecorder(stream); }
+        catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('Voice recording is unavailable.'); }
+        recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        recorder.onstop = async () => {
+            stream.getTracks().forEach(t => t.stop()); reset();
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+            recorder = null;
+            if (!cancelled && blob.size) await sendGroupMedia(gp, new File([blob], 'voice-note', { type: blob.type }));
+        };
+        recorder.start(); mic.classList.add('recording'); recordBar.hidden = false;
+    };
+    $('.gcancel', gp.node).onclick = () => { cancelled = true; stop(); };
+    $('.gstop', gp.node).onclick = stop;
 };
 
 // Tear down the open group when navigating away.
 export const closeCurrentGroup = () => {
     if (!current) return;
     leaveCall(current);
+    current.dataPeers?.forEach(c => { try { c.close(); } catch (e) {} });
     try { current.ch.unsubscribe(); } catch (e) {}
     current = null;
 };
@@ -101,9 +214,18 @@ const openGroup = (group) => {
         </div>
         <div class="gvideos"></div>
         <div class="chatlog"></div>
-        <form class="chatin"><input placeholder="Message the group…" autocomplete="off" aria-label="Message"><button type="submit">Send</button></form>
+        <div class="grecord" hidden><span>● Recording voice clip…</span><button type="button" class="gcancel">Cancel</button><button type="button" class="gstop">Send</button></div>
+        <form class="chatin groupin">
+          <button type="button" class="icon gsnap" aria-label="Send a Snap">◉</button>
+          <button type="button" class="icon gattach" aria-label="Attach a file">📎</button>
+          <button type="button" class="icon gmic" aria-label="Record voice clip">🎤</button>
+          <input class="ginput" placeholder="Message the group…" autocomplete="off" aria-label="Message">
+          <button type="submit">Send</button>
+          <input class="gfile" type="file" hidden>
+          <input class="gsnapfile" type="file" accept="image/*,video/*" capture="environment" hidden>
+        </form>
       </main>`;
-    const gp = { id: group.id, node: $('main'), members, call: null, ch: null, name: group.name };
+    const gp = { id: group.id, node: $('main'), members, call: null, ch: null, name: group.name, dataPeers: new Map() };
     current = gp;
     gSys(gp, `${group.name || 'Group'} · ${Object.keys(members).length} members`);
 
@@ -118,8 +240,14 @@ const openGroup = (group) => {
         exclude: new Set(Object.keys(members)),
         onPick: async (uid, username) => { const { error } = await db.addGroupMember(gp.id, uid); if (error) return toast('Could not add'); gp.members[uid] = { username }; gSys(gp, `${username} was added`); },
     });
-    const form = $('.chatin', gp.node), input = $('input', form);
+    const form = $('.chatin', gp.node), input = $('.ginput', form);
     form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; bcast(gp, { t: 'msg', text: t }); gText(gp, 'You', t, 'me'); input.value = ''; };
+    const file = $('.gfile', gp.node), snapFile = $('.gsnapfile', gp.node);
+    $('.gattach', gp.node).onclick = () => file.click();
+    file.onchange = () => { const f = file.files[0]; if (f) sendGroupMedia(gp, f); file.value = ''; };
+    $('.gsnap', gp.node).onclick = () => snapFile.click();
+    snapFile.onchange = () => { const f = snapFile.files[0]; if (f) sendGroupMedia(gp, f, true); snapFile.value = ''; };
+    wireGroupMic(gp);
 };
 
 export const openGroupById = async (id) => {

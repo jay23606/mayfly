@@ -121,13 +121,14 @@ const onSignal = (p) => {
     entry && entry.handleSignal(p);
 };
 
-const startRtc = (dmHandler, callHandler) => new Promise((resolve) => {
+const startRtc = (dmHandler, callHandler, groupDataHandler) => new Promise((resolve) => {
     onMediaConn = callHandler;   // incoming video calls (1:1 or a group-mesh leg)
     // Incoming data connection is either a live chat (metadata.kind==='dm') or someone
     // asking for the full image of a snap/story we sent them (kept in our IndexedDB
     // under snap:<id> / story:<id>). Serve the JPEG as raw binary, then done.
     onDataConn = (c) => {
         if (c.metadata?.kind === 'dm') return dmHandler && dmHandler(c);
+        if (c.metadata?.kind === 'group') return groupDataHandler && groupDataHandler(c);
         c.on('data', async (d) => {
             if (!d || d.type !== 'want') return;
             const full = await idb.get('snap:' + d.id) || await idb.get('story:' + d.id);

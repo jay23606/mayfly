@@ -5,7 +5,7 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
-import { openGroupById, createGroupFlow, onIncomingGroupCall, renderGroupList, closeCurrentGroup } from './groups.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
@@ -629,7 +629,7 @@ const enterApp = async (session) => {
     const username = prof?.username || state.me.user_metadata?.username || ('user_' + state.me.id.slice(0, 8));
     const { data: saved } = await db.upsertProfile({ username, pubkey: JSON.stringify(pubJwk), avatar: prof?.avatar || '' });
     state.profile = saved || prof || { username };
-    await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c));
+    await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c), onIncomingGroupData);
     startPresence();
     startRealtime();
     sweepLocal();

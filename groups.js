@@ -115,7 +115,16 @@ const sendGroupMedia = async (gp, file, snap = false) => {
         if (sent) conn.send({ t: 'gmedia-done', id });
     }));
     const media = { ...meta, url: URL.createObjectURL(file) };
-    if (snap) groupSnapCard(gp, media, 'me'); else groupMediaBubble(gp, media, 'me');
+    if (gp.node) {
+        if (snap) groupSnapCard(gp, media, 'me'); else groupMediaBubble(gp, media, 'me');
+    } else {
+        gp.pending.push({ media, name: 'You' });
+    }
+};
+export const sendGroupSnap = (groupId, file) => {
+    const gp = current && current.id === groupId ? current : backgrounds.get(groupId);
+    if (!gp) return toast('Group is not ready yet.');
+    return sendGroupMedia(gp, file, true);
 };
 
 // ---- mesh video ----
@@ -284,7 +293,6 @@ const openGroup = (group) => {
           <input class="ginput" placeholder="Message the group…" autocomplete="off" aria-label="Message">
           <button type="submit">Send</button>
           <input class="gfile" type="file" hidden>
-          <input class="gsnapfile" type="file" accept="image/*,video/*" capture="environment" hidden>
         </form>
       </main>`;
     const gp = { id: group.id, group, node: $('main'), members, call: null, ch: null, name: group.name, dataPeers: new Map(), pending: [] };
@@ -309,11 +317,10 @@ const openGroup = (group) => {
     });
     const form = $('.chatin', gp.node), input = $('.ginput', form);
     form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; bcast(gp, { t: 'msg', text: t }); gText(gp, 'You', t, 'me'); input.value = ''; };
-    const file = $('.gfile', gp.node), snapFile = $('.gsnapfile', gp.node);
+    const file = $('.gfile', gp.node);
     $('.gattach', gp.node).onclick = () => file.click();
     file.onchange = () => { const f = file.files[0]; if (f) sendGroupMedia(gp, f); file.value = ''; };
-    $('.gsnap', gp.node).onclick = () => snapFile.click();
-    snapFile.onchange = () => { const f = snapFile.files[0]; if (f) sendGroupMedia(gp, f, true); snapFile.value = ''; };
+    $('.gsnap', gp.node).onclick = () => { location.hash = '#/groupsnap/' + gp.id; };
     wireGroupMic(gp);
 };
 

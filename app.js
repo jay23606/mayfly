@@ -5,7 +5,7 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
-import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups } from './groups.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendGroupSnap } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
@@ -50,7 +50,7 @@ const startCamera = async () => {
         $('#camerr').innerHTML = 'Camera unavailable. <b>Tap the photo icon</b> to pick from your gallery instead.';
     }
 };
-const viewCamera = (defaultRecipientId = null) => {
+const viewCamera = (defaultRecipientId = null, groupId = null) => {
     stopStream();
     app.innerHTML = `<main class="camwrap">
       <div class="viewport">
@@ -64,11 +64,12 @@ const viewCamera = (defaultRecipientId = null) => {
         <input id="file" type="file" accept="image/*,video/*" hidden>
       </div>
     </main>`;
+    const finishShot = (shot) => groupId ? composeGroupSnap(shot, groupId) : compose(shot, defaultRecipientId);
     $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
         const f = $('#file').files[0]; if (!f) return;
-        try { compose(f.type.startsWith('video/') ? await processVideo(f) : await processImage(f), defaultRecipientId); }
+        try { finishShot(f.type.startsWith('video/') ? await processVideo(f) : await processImage(f)); }
         catch (e) { toast('Could not read that media.'); }
     };
     $('#shoot').onclick = () => {
@@ -77,7 +78,7 @@ const viewCamera = (defaultRecipientId = null) => {
         const ctx = c.getContext('2d');
         if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }   // un-mirror the selfie
         ctx.drawImage(v, 0, 0);
-        compose(processCanvas(c), defaultRecipientId);
+        finishShot(processCanvas(c));
     };
     const shoot = $('#shoot');
     shoot.onclick = null; // pointer handling below distinguishes a tap from a hold.
@@ -87,7 +88,7 @@ const viewCamera = (defaultRecipientId = null) => {
         const ctx = c.getContext('2d');
         if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
         ctx.drawImage(v, 0, 0);
-        compose(processCanvas(c), defaultRecipientId);
+        finishShot(processCanvas(c));
     };
     const captureVideoPreview = () => {
         const v = $('#cam'); if (!v?.videoWidth) return null;
@@ -120,7 +121,7 @@ const viewCamera = (defaultRecipientId = null) => {
             try {
                 const shot = await processVideo(blob);
                 if (preview) shot.preview = preview;
-                compose(shot, defaultRecipientId);
+                finishShot(shot);
             }
             catch (e) { toast('Could not prepare that video.'); }
         };
@@ -216,6 +217,35 @@ const compose = async (shot, defaultRecipientId = null) => {
         if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
         viewCamera(defaultRecipientId);
+    };
+};
+
+// A group Snap uses the same camera, but sends one view-once item to the group.
+const composeGroupSnap = async (shot, groupId) => {
+    stopStream();
+    const isVideo = shot.mime?.startsWith('video/');
+    const previewUrl = isVideo ? (shot.localPreviewUrl || shot.full) : shot.full;
+    const releasePreview = () => { if (shot.localPreviewUrl) URL.revokeObjectURL(shot.localPreviewUrl); };
+    app.innerHTML = `<main class="composewrap">
+      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
+        ${isVideo ? `<video src="${safeMediaUrl(previewUrl)}" autoplay muted loop playsinline></video>` : ''}
+        <button class="retake" id="retake" aria-label="Retake">✕</button>
+      </div>
+      <div class="sendrow">
+        <div class="sendto">Send a ${isVideo ? 'video' : 'photo'} Snap to this group</div>
+        <button class="btn send" id="gsend">Send Snap ▸</button>
+      </div>
+    </main>`;
+    $('#retake').onclick = () => { releasePreview(); viewCamera(null, groupId); };
+    $('#gsend').onclick = async () => {
+        const button = $('#gsend'); button.disabled = true; button.textContent = 'Sending…';
+        const mime = shot.mime || 'image/jpeg';
+        const file = shot.rawBlob
+            ? new File([shot.rawBlob], 'group-snap.' + (isVideo ? 'webm' : 'jpg'), { type: mime })
+            : new File([await dataUrlToBytes(shot.full)], 'group-snap.jpg', { type: mime });
+        await sendGroupSnap(groupId, file);
+        releasePreview();
+        location.hash = '#/group/' + groupId;
     };
 };
 
@@ -533,6 +563,7 @@ const route = () => {
     if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
     if (seg === 'snap' && arg) return viewCamera(arg);
+    if (seg === 'groupsnap' && arg) return viewCamera(null, arg);
     if (seg === 'group' && arg) return openGroupById(arg);
     if (seg === 'me') return viewMe();
     return viewCamera();

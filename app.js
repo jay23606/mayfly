@@ -157,11 +157,7 @@ const compose = async (shot, defaultRecipientId = null) => {
     const chosen = new Set();
     let toStory = false;
     const send = $('#send');
-    const refreshSend = () => {
-        const n = chosen.size + (toStory ? 1 : 0);
-        send.disabled = !n;
-        send.textContent = n ? `Send (${n}) ▸` : 'Send ▸';
-    };
+    const refreshSend = () => { const n = chosen.size + (toStory ? 1 : 0); send.disabled = !n; send.textContent = n ? `Send ▸` : 'Send ▸'; };
     const { data: friends } = await db.friends();
     const box = $('#recips'); if (!box) return;
     const list = (friends || []).map(f => otherOf(f)).filter(Boolean);
@@ -190,17 +186,11 @@ const compose = async (shot, defaultRecipientId = null) => {
         send.disabled = true; send.textContent = 'Sending…';
         const caption = $('#cap').value.trim();
         const targets = list.filter(u => chosen.has(u.id));
-        let ok = 0, blocked = 0, failed = 0;
+        let ok = 0, blocked = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
-        const results = await Promise.all(targets.map(async (u) => ({ u, result: await sendSnap(shot, u, caption, timer) })));
-        for (const { u, result } of results) {
-            if (result === true) { ok++; noteSentSnap(u.id); }
-            else if (result === 'cap') blocked++;
-            else failed++;
-        }
+        for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
-        if (failed) toast(`${failed} recipient${failed === 1 ? '' : 's'} could not receive the Snap.`);
         viewCamera(defaultRecipientId);
     };
 };

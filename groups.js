@@ -93,7 +93,7 @@ const openGroup = (group) => {
     const avs = Object.entries(members).filter(([uid]) => uid !== state.me.id).slice(0, 3).map(([, p]) => avatarHTML(p.username, p.avatar, 'gav')).join('');
     app.innerHTML = `<main class="chatview group">
         <div class="chathead">
-          <button class="icon back" data-go="#/chat" aria-label="Back">‹</button>
+          <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           <div class="gavatars">${avs || '👥'}</div>
           <div class="who"><b>${esc(group.name || 'Group')}</b><div class="sub gonline">…</div></div>
           <button class="icon gadd" aria-label="Add friend">＋</button>
@@ -176,8 +176,9 @@ export const renderGroupList = async (into) => {
     if (!into) return;
     const { data } = await db.myGroups();
     into.innerHTML = '';
-    (data || []).forEach(g => {
-        const names = (g.mf_group_members || []).map(m => m.profiles?.username).filter(Boolean).slice(0, 4).join(', ');
-        into.appendChild(el(`<button class="urow" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b>${esc(g.name || 'Group')}</b><div class="sub">${esc(names)}</div></div></button>`));
+    if (!data || !data.length) { into.innerHTML = `<div class="muted tiny" style="padding:4px 12px 8px">No groups yet — tap ＋ to start one.</div>`; return; }
+    data.forEach(g => {
+        const members = (g.mf_group_members || []).map(m => m.profiles?.username).filter(Boolean);
+        into.appendChild(el(`<button class="conv" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b>${esc(g.name || 'Group')}</b><div class="sub">${esc(members.slice(0, 4).join(', ')) || (members.length + ' members')}</div></div></button>`));
     });
 };

@@ -340,7 +340,7 @@ const renderFriends = async () => {
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
-            <div class="acts"><button class="pill chatbtn" data-go="#/chat/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
+            <div class="acts"><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
         $('.snapbtn', row).onclick = () => { location.hash = '#/'; };   // camera; they pick recipients there
         box.appendChild(row);
     });

@@ -34,16 +34,15 @@ const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        // Ask for a synchronized A/V stream. Merging a separate microphone stream into
+        // an existing camera stream can yield an unplayable recording on some browsers.
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
+        } catch (audioError) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        }
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
-        // Request audio separately so denying microphone access never blocks photos.
-        // If granted, its track is added to this stream and MediaRecorder captures it.
-        const cameraStream = stream;
-        navigator.mediaDevices.getUserMedia({ audio: true }).then((mic) => {
-            if (stream !== cameraStream) return mic.getTracks().forEach(t => t.stop());
-            mic.getAudioTracks().forEach(t => cameraStream.addTrack(t));
-        }).catch(() => {});
     } catch (e) {
         $('#camerr').innerHTML = 'Camera unavailable. <b>Tap the photo icon</b> to pick from your gallery instead.';
     }

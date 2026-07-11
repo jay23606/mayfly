@@ -44,13 +44,18 @@ const groupSnapCard = (gp, media, cls, name = '') => {
     const card = el(`<button class="snapcard ${media.kind === 'video' ? 'video' : 'photo'} ${cls}"><span class="sq">${media.kind === 'video' ? '▶' : '●'}</span> Tap to view ${media.kind === 'video' ? 'Video' : 'Photo'} Snap</button>`);
     if (cls === 'them') card.insertAdjacentHTML('afterbegin', `<span class="gwho">${esc(name)}</span>`);
     card.onclick = () => {
-        const tag = media.kind === 'video' ? `<video src="${safeMediaUrl(media.url)}" autoplay muted playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="snap">`;
+        const tag = media.kind === 'video' ? `<video src="${safeMediaUrl(media.url)}" autoplay controls playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="snap">`;
         const ov = el(`<div class="player">${tag}<div class="pbar"><i></i></div></div>`);
         document.body.appendChild(ov);
         const finish = () => { clearTimeout(t); ov.remove(); URL.revokeObjectURL(media.url); card.remove(); };
         const t = setTimeout(finish, 5000);
         ov.onclick = finish;
-        if (media.kind === 'video') $('video', ov).onended = finish;
+        if (media.kind === 'video') {
+            const video = $('video', ov);
+            video.onclick = (e) => e.stopPropagation();
+            video.onended = finish;
+            video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+        }
     };
     $('.chatlog', gp.node)?.appendChild(card);
     $('.chatlog', gp.node).scrollTop = $('.chatlog', gp.node).scrollHeight;

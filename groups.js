@@ -86,6 +86,17 @@ const syncGroupDataPeers = (gp) => {
         if (state.me.id > uid) wireGroupData(gp, uid, peer.connect(uid, { metadata: { kind: 'group', group: gp.id, user_id: state.me.id } }));
     }
 };
+const readyGroupPeers = async (gp) => {
+    const st = gp.ch?.presenceState?.() || {};
+    const online = Object.keys(st).filter(uid => uid !== state.me.id && gp.members[uid]);
+    for (let i = 0; i < 40; i++) {
+        syncGroupDataPeers(gp);
+        const peers = [...gp.dataPeers.values()].filter(c => c.open);
+        if (peers.length >= online.length || (peers.length && i > 8)) return peers;
+        await new Promise(r => setTimeout(r, 100));
+    }
+    return [...gp.dataPeers.values()].filter(c => c.open);
+};
 export const onIncomingGroupData = (conn) => {
     const gp = current && current.id === conn.metadata?.group ? current : backgrounds.get(conn.metadata?.group);
     if (!gp || !gp.members[conn.peer]) return conn.close();
@@ -94,8 +105,7 @@ export const onIncomingGroupData = (conn) => {
 const sendGroupMedia = async (gp, file, snap = false) => {
     if (!file) return;
     if (file.size > MEDIA_MAX) return toast(`Media is too large (max ${Math.round(MEDIA_MAX / 1e6)} MB).`);
-    syncGroupDataPeers(gp);
-    const peers = [...gp.dataPeers.values()].filter(c => c.open);
+    const peers = await readyGroupPeers(gp);
     if (!peers.length) return toast('Group members need this chat open to receive media.');
     const kind = mimeKind(file.type), id = gid(), bytes = await file.arrayBuffer();
     const meta = { t: 'gmedia-meta', id, bytes: bytes.byteLength, mime: file.type, kind, name: file.name || kind, nameFrom: state.profile.username, snap };

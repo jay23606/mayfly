@@ -138,6 +138,7 @@ export const openConversation = async (box, uid) => {
         </div>
         <div class="tbody" id="tbody"><div class="spin">…</div></div>
         <div class="ctyping" id="ctyping"></div>
+        <div class="voicepreview" hidden></div>
         <form class="tin">
           <button type="button" class="icon snapbtn" aria-label="Send a snap">◉</button>
           <button type="button" class="icon attach" aria-label="Attach">📎</button>
@@ -276,15 +277,37 @@ const sendFile = async (uid, file, kind) => {
     appendMedia(m, 'me'); histPush(uid, m);
 };
 const wireMic = (box, uid) => {
-    let rec = null, stream = null, chunks = [];
-    $('.mic', box).onclick = async () => {
-        if (rec && rec.state === 'recording') return rec.stop();
-        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
-        chunks = []; rec = new MediaRecorder(stream);
-        rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
-        rec.onstop = async () => { stream.getTracks().forEach(t => t.stop()); $('.mic', box).classList.remove('recording'); const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); await sendFile(uid, new File([blob], 'voice-note', { type: blob.type }), 'audio'); };
-        rec.start(); $('.mic', box).classList.add('recording');
+    let rec = null, stream = null, chunks = [], holding = false, cancelled = false, draft = null, draftUrl = null;
+    const mic = $('.mic', box), tray = $('.voicepreview', box);
+    const reset = () => {
+        mic.classList.remove('recording'); tray.hidden = true;
+        if (draftUrl) URL.revokeObjectURL(draftUrl);
+        draft = null; draftUrl = null; tray.innerHTML = '';
     };
+    const stop = () => { if (rec?.state === 'recording') rec.stop(); };
+    const start = async (e) => {
+        e?.preventDefault();
+        if (rec?.state === 'recording' || draft) return;
+        holding = true; mic.setPointerCapture?.(e?.pointerId);
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
+        if (!holding) { stream.getTracks().forEach(t => t.stop()); return; }
+        chunks = []; cancelled = false; rec = new MediaRecorder(stream);
+        rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        rec.onstop = () => {
+            stream.getTracks().forEach(t => t.stop()); mic.classList.remove('recording');
+            const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); rec = null;
+            if (cancelled || !blob.size) return reset();
+            draft = new File([blob], 'voice-note', { type: blob.type }); draftUrl = URL.createObjectURL(draft);
+            tray.hidden = false;
+            tray.innerHTML = `<audio src="${safeMediaUrl(draftUrl)}" controls></audio><button type="button" class="vxc" aria-label="Discard voice clip">✕</button><button type="button" class="vsend">Send</button>`;
+            $('.vxc', tray).onclick = reset;
+            $('.vsend', tray).onclick = async () => { const clip = draft; reset(); await sendFile(uid, clip, 'audio'); };
+        };
+        rec.start(); mic.classList.add('recording');
+    };
+    mic.onpointerdown = start;
+    mic.onpointerup = () => { holding = false; stop(); };
+    mic.onpointercancel = () => { holding = false; cancelled = true; stop(); };
 };
 
 // P2P data connection for typing + media (text no longer needs it — it's async).

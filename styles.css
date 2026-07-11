@@ -263,6 +263,11 @@ main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - va
 .ctyping{min-height:0;padding:2px 14px;color:var(--muted);font-size:12px}
 .tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none}
 .tin .icon{font-size:20px;flex:none}
+.voicepreview{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel)}
+.voicepreview[hidden]{display:none}
+.voicepreview audio{height:32px;max-width:min(240px,60vw)}
+.voicepreview button{border:0;border-radius:999px;padding:6px 12px;cursor:pointer;background:var(--panel2);color:var(--text);font-weight:700}
+.voicepreview .vsend{background:var(--grad);color:#08080c}
 .tinput{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:10px 16px;outline:none;font-size:16px}
 .tinput:focus{border-color:var(--accent)}
 .sendbtn{background:var(--grad);color:#08080c;border:0;border-radius:50%;width:40px;height:40px;font-size:15px;cursor:pointer;flex:none}

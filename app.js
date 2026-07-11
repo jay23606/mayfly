@@ -100,18 +100,12 @@ const viewCamera = (defaultRecipientId = null) => {
         if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
         const chunks = [];
         const preview = captureVideoPreview();
-        // Safari commonly records MP4 while Chromium records WebM. Pick a declared
-        // container up front so the Blob is not mislabeled as WebM on Safari.
-        const recordingMime = [
-            'video/mp4;codecs=avc1.42E01E', 'video/mp4',
-            'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm',
-        ].find(type => MediaRecorder.isTypeSupported(type));
-        try { recorder = new MediaRecorder(stream, recordingMime ? { mimeType: recordingMime } : undefined); }
+        try { recorder = new MediaRecorder(stream); }
         catch (e) { return toast('Could not start video recording.'); }
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
             shoot.classList.remove('recording');
-            const blob = new Blob(chunks, { type: recorder.mimeType || recordingMime || 'video/webm' });
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
             recorder = null;
             if (!blob.size) return;
             try {
@@ -145,15 +139,9 @@ const compose = async (shot, defaultRecipientId = null) => {
     stopStream();
     const isVideo = shot.mime?.startsWith('video/');
     if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
-    // Browsers are more reliable at previewing a Blob URL than a large video data URL.
-    // Keep this URL only for the compose player; the original data URL remains the payload.
-    const previewUrl = isVideo
-        ? URL.createObjectURL(new Blob([await dataUrlToBytes(shot.full)], { type: shot.mime }))
-        : shot.full;
-    const releasePreview = () => { if (isVideo) URL.revokeObjectURL(previewUrl); };
     app.innerHTML = `<main class="composewrap">
-      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
-        ${isVideo ? `<video class="composevideo" src="${safeMediaUrl(previewUrl)}" poster="${safeMediaUrl(shot.preview)}" controls playsinline preload="metadata"></video>` : ''}
+      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(shot.full)}')"`}>
+        ${isVideo ? `<video src="${safeMediaUrl(shot.full)}" autoplay muted loop playsinline></video>` : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
@@ -164,7 +152,7 @@ const compose = async (shot, defaultRecipientId = null) => {
         <button class="btn send" id="send" disabled>Send ▸</button>
       </div>
     </main>`;
-    $('#retake').onclick = () => { releasePreview(); viewCamera(defaultRecipientId); };
+    $('#retake').onclick = () => viewCamera(defaultRecipientId);
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
     const chosen = new Set();
     let toStory = false;
@@ -213,7 +201,6 @@ const compose = async (shot, defaultRecipientId = null) => {
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
         if (failed) toast(`${failed} recipient${failed === 1 ? '' : 's'} could not receive the Snap.`);
-        releasePreview();
         viewCamera(defaultRecipientId);
     };
 };

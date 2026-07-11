@@ -440,8 +440,9 @@ const playStories = (groups, startGroup = 0) => {
 // ===================== chats (unified conversations: snaps + chat) =====================
 // Responsive: two-pane (list + open thread) on wide screens; single-pane on mobile
 // where opening a conversation swaps to the thread (the `showthread` class).
-const viewChats = (activeUid) => {
-    app.innerHTML = `<main class="chats ${activeUid ? 'showthread' : ''}">
+const viewChats = (activeUid, activeGroupId = null) => {
+    const open = activeUid || activeGroupId;
+    app.innerHTML = `<main class="chats ${open ? 'showthread' : ''}">
       <aside class="convlist">
         <div id="storiesbar" class="storiesbar"></div>
         <div class="grouphead">Groups <button class="pill primary" id="newgroup" aria-label="New group">＋</button></div>
@@ -449,13 +450,14 @@ const viewChats = (activeUid) => {
         <div class="convhead">Chats</div>
         <div id="convs"><div class="spin">Loading…</div></div>
       </aside>
-      <section class="threadpane" id="threadpane">${activeUid ? '<div class="spin">…</div>' : '<div class="threadempty">Pick a conversation, or tap ◉ on someone to snap them.</div>'}</section>
+      <section class="threadpane" id="threadpane">${open ? '<div class="spin">…</div>' : '<div class="threadempty">Pick a conversation, or tap ◉ on someone to snap them.</div>'}</section>
     </main>`;
     $('#newgroup').onclick = () => createGroupFlow();
     renderStoriesBar($('#storiesbar'));
-    renderGroupList($('#grouplist'));
+    renderGroupList($('#grouplist'), activeGroupId);
     renderConvs($('#convs'), activeUid);
     if (activeUid) openConversation($('#threadpane'), activeUid);
+    else if (activeGroupId) openGroupById(activeGroupId, $('#threadpane'));
 };
 
 // ===================== friends =====================
@@ -594,7 +596,7 @@ const mountChrome = (force) => {
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
     const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
-    const activeGo = (seg === '' || seg === 'c') ? '#/chats' : ((seg === 'snap' || seg === 'groupsnap') ? '#/camera' : ('#/' + seg));
+    const activeGo = (seg === '' || seg === 'c' || seg === 'group') ? '#/chats' : ((seg === 'snap' || seg === 'groupsnap') ? '#/camera' : ('#/' + seg));
     $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo));
 };
 const unmountChrome = () => document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
@@ -612,7 +614,7 @@ const route = () => {
     if (seg === 'camera') return viewCamera();
     if (seg === 'snap' && arg) return viewCamera(arg);
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);
-    if (seg === 'group' && arg) return openGroupById(arg);
+    if (seg === 'group' && arg) return viewChats(null, arg);
     if (seg === 'me') return viewMe();
     return viewChats();
 };

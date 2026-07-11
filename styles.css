@@ -266,6 +266,8 @@ main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - va
 .camicon{display:inline-flex;align-items:center;color:var(--muted);padding:4px 6px;flex:none}
 
 .threadpane{display:none;flex:1;min-width:0;flex-direction:column}
+/* a group opens inside the thread pane — fill it rather than the whole viewport */
+.threadpane .chatview{height:100%}
 .threadempty{margin:auto;color:var(--muted);padding:24px;text-align:center}
 .thread{display:flex;flex-direction:column;height:100%;width:100%}
 .thead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);flex:none}
@@ -298,7 +300,7 @@ main.chats.showthread .threadpane{display:flex}
   .convlist{width:340px;flex:none;border-right:1px solid var(--line)}
   main.chats .threadpane{display:flex}
   main.chats.showthread .convlist{display:block}
-  .thead .back{display:none}
+  .thead .back,.chathead .back{display:none}
 }
 
 /* ---------- toast ---------- */

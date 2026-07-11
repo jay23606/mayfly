@@ -281,12 +281,12 @@ export const closeCurrentGroup = () => {
     startBackground(gp.group, gp.pending || []);
 };
 
-const openGroup = (group) => {
+const openGroup = (group, container = app) => {
     closeCurrentGroup();
     const pending = pauseBackground(group.id);
     const members = memberMap(group);
     const avs = Object.entries(members).filter(([uid]) => uid !== state.me.id).slice(0, 3).map(([, p]) => avatarHTML(p.username, p.avatar, 'gav')).join('');
-    app.innerHTML = `<main class="chatview group">
+    container.innerHTML = `<div class="chatview group">
         <div class="chathead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           <div class="gavatars">${avs || '👥'}</div>
@@ -309,8 +309,8 @@ const openGroup = (group) => {
           <button type="button" class="icon gattach" aria-label="Attach a file">${icon('paperclip')}</button>
           <input class="gfile" type="file" hidden>
         </form>
-      </main>`;
-    const gp = { id: group.id, group, node: $('main'), members, call: null, ch: null, name: group.name, dataPeers: new Map(), pending: [] };
+      </div>`;
+    const gp = { id: group.id, group, node: container.firstElementChild, members, call: null, ch: null, name: group.name, dataPeers: new Map(), pending: [] };
     current = gp;
     gSys(gp, `${group.name || 'Group'} · ${Object.keys(members).length} members`);
     pending.forEach(item => {
@@ -342,11 +342,11 @@ const openGroup = (group) => {
     wireGroupMic(gp);
 };
 
-export const openGroupById = async (id) => {
-    app.innerHTML = `<main><div class="spin">Loading group…</div></main>`;
+export const openGroupById = async (id, container = app) => {
+    container.innerHTML = `<div class="spin">Loading group…</div>`;
     const { data, error } = await db.groupById(id);
-    if (error || !data) return void (app.innerHTML = `<div class="empty">Group not found.</div>`);
-    openGroup(data);
+    if (error || !data) return void (container.innerHTML = `<div class="empty">Group not found.</div>`);
+    openGroup(data, container);
 };
 
 // ---- friends picker modal (create group / add member) ----
@@ -392,13 +392,13 @@ export const createGroupFlow = (prefill = []) => pickFriends('New group', {
 });
 
 // A compact list of your groups for the Chat tab.
-export const renderGroupList = async (into) => {
+export const renderGroupList = async (into, activeId = null) => {
     if (!into) return;
     const { data } = await db.myGroups();
     into.innerHTML = '';
     if (!data || !data.length) { into.innerHTML = `<div class="muted tiny" style="padding:4px 12px 8px">No groups yet — tap ＋ to start one.</div>`; return; }
     data.forEach(g => {
         const members = (g.mf_group_members || []).map(m => m.profiles?.username).filter(Boolean);
-        into.appendChild(el(`<button class="conv" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b>${esc(g.name || 'Group')}</b><div class="sub">${esc(members.slice(0, 4).join(', ')) || (members.length + ' members')}</div></div></button>`));
+        into.appendChild(el(`<button class="conv ${g.id === activeId ? 'active' : ''}" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b>${esc(g.name || 'Group')}</b><div class="sub">${esc(members.slice(0, 4).join(', ')) || (members.length + ' members')}</div></div></button>`));
     });
 };

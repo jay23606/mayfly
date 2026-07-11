@@ -47,6 +47,12 @@ const db = {
     // snaps I sent that have now been opened / expired → clean up my device copies
     mySpentSnaps: () => sb.from('mf_snaps').select('id').eq('sender_id', state.me.id),
 
+    // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
+    sendMessage: (row) => sb.from('mf_messages').insert(row),
+    // everything sent to me that I haven't picked up yet (across all friends)
+    myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id).order('created_at'),
+    delMessage: (id) => sb.from('mf_messages').delete().eq('id', id),
+
     // ---- streaks (atomic bump via SECURITY DEFINER fn; canonicalizes the pair) ----
     bumpStreak: (other) => sb.rpc('mf_bump_streak', { other }),
     streaks: () => sb.from('mf_streaks').select('*')

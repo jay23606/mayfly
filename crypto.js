@@ -51,3 +51,14 @@ export async function decryptWith(myPriv, ephPubStr, ivB64, ctBuf) {
         { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
     return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(ivB64) }, aes, ctBuf);
 }
+
+// Convenience wrappers for short text (chat messages): everything base64 so it fits
+// in a DB row. The server only ever stores the ciphertext.
+export async function encryptText(recipientPubJwk, str) {
+    const { ct, iv, ephPub } = await encryptFor(recipientPubJwk, new TextEncoder().encode(str));
+    return { iv, eph_pub: ephPub, body: b64.enc(ct) };
+}
+export async function decryptText(myPriv, ephPubStr, ivB64, bodyB64) {
+    const pt = await decryptWith(myPriv, ephPubStr, ivB64, b64.dec(bodyB64));
+    return new TextDecoder().decode(pt);
+}

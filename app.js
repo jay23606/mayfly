@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { openChat, renderChatList, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, bootChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, renderGroupList, closeCurrentGroup } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -118,7 +118,7 @@ const compose = async (shot) => {
         const targets = list.filter(u => chosen.has(u.id));
         let ok = 0, blocked = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
-        for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); r === true ? ok++ : r === 'cap' ? blocked++ : 0; }
+        for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
         viewCamera();
@@ -237,82 +237,25 @@ const playStories = (items, mine) => {
     show(0);
 };
 
-// ===================== inbox =====================
-const viewInbox = async () => {
-    app.innerHTML = `<main>
-      <h3 class="vtitle">Snaps</h3>
-      <div id="storiesbar" class="storiesbar"></div>
-      <div id="inbox"><div class="spin">Loading…</div></div></main>`;
+// ===================== chats (unified conversations: snaps + chat) =====================
+// Responsive: two-pane (list + open thread) on wide screens; single-pane on mobile
+// where opening a conversation swaps to the thread (the `showthread` class).
+const viewChats = (activeUid) => {
+    app.innerHTML = `<main class="chats ${activeUid ? 'showthread' : ''}">
+      <aside class="convlist">
+        <div id="storiesbar" class="storiesbar"></div>
+        <div class="grouphead">Groups <button class="pill primary" id="newgroup" aria-label="New group">＋</button></div>
+        <div id="grouplist"></div>
+        <div class="convhead">Chats</div>
+        <div id="convs"><div class="spin">Loading…</div></div>
+      </aside>
+      <section class="threadpane" id="threadpane">${activeUid ? '<div class="spin">…</div>' : '<div class="threadempty">Pick a conversation, or tap ◉ on someone to snap them.</div>'}</section>
+    </main>`;
+    $('#newgroup').onclick = () => createGroupFlow();
     renderStoriesBar($('#storiesbar'));
-    const { data, error } = await db.inbox();
-    const box = $('#inbox'); if (!box) return;
-    if (error) return void (box.innerHTML = `<div class="empty">Couldn't load your snaps.<br><span class="muted">${esc(error.message)}</span></div>`);
-    setBadge((data || []).length);
-    if (!data || !data.length) return void (box.innerHTML = `<div class="empty">No new snaps.<br><a href="#/">Send one →</a></div>`);
-    box.innerHTML = '';
-    data.forEach(s => box.appendChild(inboxRow(s)));
-};
-const inboxRow = (s) => {
-    const u = s.sender || {};
-    const live = s.delivery === 'live';
-    const row = el(`<button class="snaprow" data-snap="${s.id}">
-        ${avatarHTML(u.username, u.avatar)}
-        <div class="who"><b>${esc(u.username || 'someone')}</b>
-          <div class="sub">${live ? '● Tap to view' : '◆ Tap to view'} · ${ago(s.created_at)}</div></div>
-        <div class="thumb" style="background-image:url('${safeMediaUrl(s.preview)}')"></div>
-      </button>`);
-    row.onclick = () => openSnap(s, row);
-    return row;
-};
-
-// ===================== view-once player =====================
-const openSnap = async (s, row) => {
-    if (row) { row.classList.add('opening'); row.disabled = true; }
-    let full = null;
-    try {
-        if (s.delivery === 'live') {
-            full = await fetchSnap(s.id, s.sender_id);   // blob: URL from the sender's browser
-        } else {
-            const dl = await sb.storage.from(SNAP_BUCKET).download(s.id);
-            if (!dl.error) {
-                const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer());
-                full = await bytesToDataUrl(new Uint8Array(pt));
-            }
-        }
-    } catch (e) { console.error('[mayfly] open failed', e); }
-    if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); await burn(s, row); return; }
-    playFull(s, full, row);
-};
-
-const playFull = (s, full, row) => {
-    const u = s.sender || {};
-    const ov = el(`<div class="player">
-        <img src="${safeMediaUrl(full)}" alt="snap from ${esc(u.username || '')}">
-        ${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}
-        <div class="pname">${esc(u.username || '')}</div>
-        <div class="pbar"><i></i></div>
-      </div>`);
-    document.body.appendChild(ov);
-    requestAnimationFrame(() => $('.pbar i', ov).style.transitionDuration = s.timer + 's');
-    requestAnimationFrame(() => $('.pbar i', ov).classList.add('run'));
-    let done = false;
-    const finish = async () => {
-        if (done) return; done = true;
-        clearTimeout(t); ov.remove();
-        if (full.startsWith('blob:')) URL.revokeObjectURL(full);
-        await burn(s, row);
-    };
-    const t = setTimeout(finish, s.timer * 1000);
-    ov.onclick = finish;   // tap to dismiss early
-};
-
-// Destroy a snap everywhere: row, relay blob, and the inbox card.
-const burn = async (s, row) => {
-    await db.delSnap(s.id);
-    if (s.delivery === 'relay') sb.storage.from(SNAP_BUCKET).remove([s.id]);
-    row?.remove();
-    setBadge(Math.max(0, badge - 1));
-    if ($('#inbox') && !$('.snaprow')) $('#inbox').innerHTML = `<div class="empty">No new snaps.<br><a href="#/">Send one →</a></div>`;
+    renderGroupList($('#grouplist'));
+    renderConvs($('#convs'), activeUid);
+    if (activeUid) openConversation($('#threadpane'), activeUid);
 };
 
 // ===================== friends =====================
@@ -403,21 +346,6 @@ const renderFriends = async () => {
     });
 };
 
-// ===================== chat list =====================
-const viewChatList = () => {
-    app.innerHTML = `<main>
-      <h3 class="vtitle">Chat</h3>
-      <p class="muted tiny" style="margin:0 2px 8px">Messages & calls are live peer-to-peer, never stored on a server.</p>
-      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">Groups
-        <button class="pill primary" id="newgroup">＋ New group</button></div>
-      <div id="grouplist"></div>
-      <div class="section-title">Friends</div>
-      <div id="chatlist"><div class="spin">Loading…</div></div></main>`;
-    $('#newgroup').onclick = () => createGroupFlow();
-    renderGroupList($('#grouplist'));
-    renderChatList($('#chatlist'));
-};
-
 // ===================== me / settings =====================
 const viewMe = () => {
     const p = state.profile;
@@ -453,13 +381,10 @@ const viewMe = () => {
 };
 
 // ===================== chrome + router =====================
-let badge = 0;
-const setBadge = (n) => { badge = Math.max(0, n); const d = $('#inboxdot'); if (d) { d.textContent = badge > 9 ? '9+' : badge; d.classList.toggle('on', badge > 0); } };
 const tabbar = () => `<nav id="tabbar" aria-label="Primary">
-    <button class="tab" data-go="#/inbox" aria-label="Snaps">📩<span class="badge-count" id="inboxdot"></span></button>
-    <button class="tab" data-go="#/chat" aria-label="Chat">💬<span class="reddot" id="chatdot"></span></button>
-    <button class="tab cam" data-go="#/" aria-label="Camera">◉</button>
+    <button class="tab" data-go="#/chats" aria-label="Chats">💬<span class="badge-count" id="chatdot"></span></button>
     <button class="tab" data-go="#/friends" aria-label="Friends">👥</button>
+    <button class="tab cam" data-go="#/" aria-label="Camera">◉</button>
     <button class="tab" data-go="#/me" aria-label="You">${isMediaUrl(state.profile.avatar) ? `<span class="navavatar"><img src="${state.profile.avatar}" alt=""></span>` : `<span class="navavatar">${initial(state.profile.username)}</span>`}</button>
   </nav>`;
 const header = () => `<header><span class="logo" data-go="#/">mayfly 🐛</span><div class="grow"></div><span id="online" class="muted">…</span></header>`;
@@ -468,8 +393,9 @@ const mountChrome = (force) => {
     if (force) document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
-    const h = location.hash.slice(1) || '/';
-    $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === '#' + h || (h === '/' && t.classList.contains('cam'))));
+    const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
+    const activeGo = seg === 'c' ? '#/chats' : ('#/' + seg);
+    $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo || (seg === '' && t.classList.contains('cam'))));
 };
 const unmountChrome = () => document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
 
@@ -477,41 +403,32 @@ const route = () => {
     const parts = (location.hash.slice(1) || '/').split('/');
     const seg = parts[1], arg = parts[2];
     stopStream();
-    detachAll();               // leaving any chat view → background msgs go to notifications
+    detachAll();               // leaving a conversation → background msgs go to notifications
     closeCurrentGroup();        // leaving a group view → tear its channel/call down
     mountChrome();
-    if (seg === 'inbox') return viewInbox();
+    if (seg === 'chats') return viewChats();
+    if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
-    if (seg === 'chat') return arg ? openChat(arg) : viewChatList();
     if (seg === 'group' && arg) return openGroupById(arg);
     if (seg === 'me') return viewMe();
     return viewCamera();
 };
-const setChatDot = () => { const d = $('#chatdot'); if (d) d.classList.toggle('on', chatUnread() > 0); };
-window.addEventListener('chat-unread', () => { setChatDot(); if ($('#chatlist')) renderChatList($('#chatlist')); });
+const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };
+window.addEventListener('chat-unread', setChatDot);
 document.addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) location.hash = g.dataset.go; });
 window.addEventListener('hashchange', () => { mountChrome(); route(); });
 
 // ===================== realtime =====================
 const startRealtime = () => {
     sb.channel('mayfly-snaps')
-      // a snap arrived for me → bump the badge, and prepend if the inbox is open
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_snaps', filter: `recipient_id=eq.${state.me.id}` }, async (payload) => {
-          const s = payload.new;
-          setBadge(badge + 1);
-          if ($('#inbox')) {
-              const { data: sender } = await db.profileById(s.sender_id);
-              s.sender = sender;
-              const empty = $('#inbox .empty'); if (empty) $('#inbox').innerHTML = '';
-              $('#inbox').insertAdjacentElement('afterbegin', inboxRow(s));
-          } else if (Notification?.permission === 'granted') {
-              new Notification('mayfly 🐛', { body: 'You got a snap!' });
-          }
-      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_snaps', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onSnapInsert(payload.new))
       // one of my sent snaps was opened/expired (row deleted) → drop my local copy
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_snaps' }, (payload) => {
           if (payload.old?.id) idb.del('snap:' + payload.old.id);
       })
+      .subscribe();
+    sb.channel('mayfly-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_messages', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onMessageInsert(payload.new))
       .subscribe();
     sb.channel('mayfly-friends')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mf_friends' }, () => { if ($('#reqs')) { renderRequests(); renderFriends(); } })
@@ -595,7 +512,8 @@ const enterApp = async (session) => {
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
     unmountChrome(); mountChrome();
     route();
-    const { data: inb } = await db.inbox(); setBadge((inb || []).length);
+    await bootChat();   // load unopened snaps + pull any messages waiting for me → sets the badge
+    setChatDot();
 };
 
 sb.auth.onAuthStateChange((_evt, session) => {

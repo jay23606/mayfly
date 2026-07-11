@@ -1,159 +1,289 @@
-import { app, $, el, esc, rand, toast, state, idb, isOnline, initial, avatarHTML, safeMediaUrl, chunkString, mimeKind } from './core.js';
-import { peer } from './rtc.js';
+import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial, ago,
+    avatarHTML, safeMediaUrl, chunkString, mimeKind, bytesToDataUrl } from './core.js';
+import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
+import { encryptText, decryptText, decryptWith } from './crypto.js';
 
-// ===================== ephemeral P2P chat =====================
-// Messages (text, photos, videos, files, voice clips) fly directly browser-to-browser
-// over WebRTC and are NEVER stored on a server. Each device keeps its own local history
-// in IndexedDB (chat:<uid>) so conversations survive a refresh — capped at 200 entries.
-// Live-only: both people must be online, matching mayfly's ephemeral spirit.
-const chats = new Map();          // uid -> { conn, username, logEl|null, binOk, sendQ }
-const unread = new Set();
-let openUid = null;               // uid of the conversation currently on screen
-export const chatUnread = () => unread.size;
-// Called on every presence sync: if the person we're chatting with just came online
-// (and we're not connected yet), establish the P2P link now.
-export const reconnectOpenChat = () => { if (openUid) { const c = chats.get(openUid); if (!(c?.conn && c.conn.open) && isOnline(openUid)) { ensureConn(openUid, c?.username); setDot(openUid, false); } } };
+// ===================== unified conversations (snaps + chat, Snapchat-style) =====================
+// TEXT is async + end-to-end encrypted via mf_messages (works even when the friend is
+// offline — they pick it up on next open, then the row is deleted). MEDIA / voice notes
+// / video calls are live P2P (both online). SNAPS show inline as "Tap to view" cards.
+// Each device keeps its own thread history in IndexedDB (thread:<uid>); nothing readable
+// lives on the server.
+
+const conns = new Map();          // uid -> live P2P data conn (for media/voice/typing)
+const pubCache = new Map();       // uid -> recipient public-key JWK
+let inboxByUser = {};             // uid -> [unopened snap rows]
+const unreadMsg = new Set();      // uids with messages received while their thread was closed
+let openUid = null;               // conversation currently on screen
+let threadBox = null, convBox = null;
+
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
-
-const hist = (uid) => idb.get('chat:' + uid).then(h => h || []);
-const save = async (uid, entry) => {
-    const h = await hist(uid);
-    h.push(entry); if (h.length > 200) h.splice(0, h.length - 200);
-    await idb.set('chat:' + uid, h).catch(() => {});
+export const chatUnread = () => {
+    const s = new Set(unreadMsg);
+    for (const uid in inboxByUser) if (inboxByUser[uid]?.length) s.add(uid);
+    return s.size;
 };
-// Don't persist very large media locally — store a placeholder instead.
-const saveMedia = (uid, entry) => (entry.data && entry.data.length > 12 * 1024 * 1024)
-    ? save(uid, { me: entry.me, text: `[${entry.kind}] ${entry.name || ''} (too large to save)` })
-    : save(uid, entry).catch(() => {});
 
-const bubble = (logEl, text, cls) => { if (!logEl) return; logEl.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); logEl.scrollTop = logEl.scrollHeight; };
-const mediaBubble = (logEl, m, cls) => {
-    if (!logEl) return;
-    const url = safeMediaUrl(m.data);   // peer-supplied → must be a data:/blob: media URL
-    const inner = m.kind === 'image' ? `<img class="chatmedia" src="${url}" alt="${esc(m.name || 'image')}">`
-        : m.kind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
-        : m.kind === 'audio' ? `<audio src="${url}" controls></audio>`
-        : `<a class="chatfile" href="${url}" download="${esc(m.name || 'file')}">📎 ${esc(m.name || 'file')}</a>`;
-    logEl.appendChild(el(`<div class="b ${cls} media">${inner}</div>`)); logEl.scrollTop = logEl.scrollHeight;
+// ---- local per-friend thread history ----
+const histGet = (uid) => idb.get('thread:' + uid).then(h => h || []);
+const histPush = async (uid, entry) => {
+    const h = await histGet(uid);
+    h.push(entry); if (h.length > 300) h.splice(0, h.length - 300);
+    await idb.set('thread:' + uid, h).catch(() => {});
 };
-const progress = (logEl, meta) => { const b = el(`<div class="b sys">receiving ${esc(meta.name || meta.kind)}… 0%</div>`); logEl?.appendChild(b); if (logEl) logEl.scrollTop = logEl.scrollHeight; return b; };
+const lastLine = (h) => {
+    if (!h || !h.length) return '';
+    const m = h[h.length - 1];
+    return m.kind === 'text' ? (m.me ? 'You: ' : '') + m.text
+        : m.kind === 'snap' ? '📷 You sent a Snap'
+        : m.kind === 'media' ? (m.me ? 'You: ' : '') + '📎 ' + (m.name || m.mediaKind || 'attachment') : '';
+};
 
-// ---- media transfer over the data channel (raw binary, with backpressure) ----
+const pubOf = async (uid) => {
+    if (pubCache.has(uid)) return pubCache.get(uid);
+    const { data } = await db.profileById(uid);
+    let jwk = null; try { jwk = data?.pubkey ? JSON.parse(data.pubkey) : null; } catch (e) {}
+    pubCache.set(uid, jwk); return jwk;
+};
+
+// ---- pull any messages that arrived while we were offline ----
+export const syncMessages = async () => {
+    const { data } = await db.myUndelivered();
+    for (const row of (data || [])) await ingestMessage(row);
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
+const ingestMessage = async (row) => {
+    let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
+    catch (e) { return; }
+    await histPush(row.sender_id, { me: false, kind: 'text', text, at: new Date(row.created_at).getTime() });
+    await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
+    if (openUid === row.sender_id) appendBubble(text, 'them');
+    else { unreadMsg.add(row.sender_id); if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: 'New message' }); }
+};
+// realtime INSERT handler (from app.js)
+export const onMessageInsert = (row) => { if (row.recipient_id === state.me.id) ingestMessage(row).then(() => { if (convBox) renderConvs(convBox, openUid); onChange(); }); };
+
+// ---- a snap arrived for me / I sent one ----
+export const onSnapInsert = async (row) => {
+    if (row.recipient_id !== state.me.id) return;
+    (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
+    if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
+    else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: 'You got a Snap!' });
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
+export const noteSentSnap = (uid) => histPush(uid, { me: true, kind: 'snap', at: Date.now() }).then(() => { if (convBox) renderConvs(convBox, openUid); });
+
+const refreshInbox = async () => {
+    const { data } = await db.inbox();
+    inboxByUser = {};
+    (data || []).forEach(s => (inboxByUser[s.sender_id] = inboxByUser[s.sender_id] || []).push(s));
+};
+
+// ===================== conversation list =====================
+export const renderConvs = async (box, activeUid) => {
+    convBox = box;
+    const { data: fr } = await db.friends();
+    const friends = (fr || []).map(f => f.requester_id === state.me.id ? f.addressee : f.requester).filter(Boolean);
+    if (box !== convBox) return;
+    // build each conversation's summary
+    const rows = await Promise.all(friends.map(async (u) => {
+        const h = await histGet(u.id);
+        const snaps = inboxByUser[u.id]?.length || 0;
+        const lastAt = h.length ? h[h.length - 1].at : 0;
+        const unread = snaps > 0 || unreadMsg.has(u.id);
+        const status = snaps ? `📩 New Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
+        return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps };
+    }));
+    rows.sort((a, b) => (b.unread - a.unread) || (b.lastAt - a.lastAt));
+    box.innerHTML = '';
+    if (!rows.length) { box.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`; return; }
+    rows.forEach(({ u, unread, status, snaps }) => {
+        const row = el(`<button class="conv ${u.id === activeUid ? 'active' : ''} ${unread ? 'unread' : ''}" data-go="#/c/${u.id}">
+            ${avatarHTML(u.username, u.avatar)}
+            <div class="who"><b>${esc(u.username)}</b>
+              <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
+            <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">◉</span></button>`);
+        $('.camicon', row).onclick = (e) => { e.preventDefault(); e.stopPropagation(); location.hash = '#/'; };
+        box.appendChild(row);
+    });
+};
+
+// ===================== conversation thread =====================
+export const openConversation = async (box, uid) => {
+    openUid = uid; threadBox = box;
+    unreadMsg.delete(uid); onChange();
+    let username = pubCache.has(uid) ? null : null;
+    const { data: prof } = await db.profileById(uid);
+    username = prof?.username || 'friend';
+    if (prof?.pubkey) { try { pubCache.set(uid, JSON.parse(prof.pubkey)); } catch (e) {} }
+    box.innerHTML = `<div class="thread">
+        <div class="thead">
+          <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
+          ${avatarHTML(username, prof?.avatar)}
+          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${isOnline(uid) ? 'active now' : 'offline'}</div></div>
+          <button class="icon callbtn" aria-label="Video call">📹</button>
+        </div>
+        <div class="tbody" id="tbody"><div class="spin">…</div></div>
+        <div class="ctyping" id="ctyping"></div>
+        <form class="tin">
+          <button type="button" class="icon snapbtn" aria-label="Send a snap">◉</button>
+          <button type="button" class="icon attach" aria-label="Attach">📎</button>
+          <button type="button" class="icon mic" aria-label="Voice note">🎤</button>
+          <input class="tinput" placeholder="Send a chat" autocomplete="off" aria-label="Message">
+          <button type="submit" class="sendbtn" aria-label="Send">➤</button>
+          <input type="file" class="fileinput" hidden>
+        </form>
+      </div>`;
+    $('.callbtn', box).onclick = () => callUser(uid, username);
+    $('.snapbtn', box).onclick = () => { location.hash = '#/'; };
+    const fileInput = $('.fileinput', box);
+    $('.attach', box).onclick = () => fileInput.click();
+    fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };
+    wireMic(box, uid);
+    const form = $('.tin', box), input = $('.tinput', box);
+    form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; sendText(uid, username, t); };
+    input.oninput = () => { const c = conns.get(uid); if (c?.open) { try { c.send({ t: 'typing' }); } catch (e) {} clearTimeout(input._tt); input._tt = setTimeout(() => { try { c.send({ t: 'stop' }); } catch (e) {} }, 1200); } };
+    await renderThreadBody(uid);
+    ensureConn(uid, username);                     // best-effort live link for typing / media
+    // grab any messages this friend sent while we were away
+    const { data: pend } = await db.myUndelivered();
+    for (const row of (pend || [])) if (row.sender_id === uid) await ingestMessage(row);
+    renderThreadBody(uid);
+    if (convBox) renderConvs(convBox, uid);
+};
+
+// Merge local history + unopened snap cards into one chronological timeline.
+const renderThreadBody = async (uid) => {
+    const body = $('#tbody'); if (!body || openUid !== uid) return;
+    const h = await histGet(uid);
+    const snaps = (inboxByUser[uid] || []).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
+    const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
+    body.innerHTML = '';
+    if (!items.length) body.innerHTML = `<div class="threadhint">Say hi 👋 — messages are end-to-end encrypted.</div>`;
+    for (const it of items) {
+        if (it.snap) body.appendChild(snapCard(it.snap));
+        else {
+            const e = it.entry;
+            if (e.kind === 'text') body.appendChild(el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
+            else if (e.kind === 'snap') body.appendChild(el(`<div class="b sys">📷 You sent a Snap</div>`));
+            else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
+        }
+    }
+    body.scrollTop = body.scrollHeight;
+};
+const snapCard = (s) => {
+    const card = el(`<button class="snapcard them"><span class="sq">◼</span> Tap to view Snap <span class="sqt">${ago(s.created_at)}</span></button>`);
+    card.onclick = () => openSnap(s, card);
+    return card;
+};
+const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
+const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
+
+// ---- send an async encrypted text ----
+const sendText = async (uid, username, text) => {
+    await histPush(uid, { me: true, kind: 'text', text, at: Date.now() });
+    appendBubble(text, 'me');
+    if (convBox) renderConvs(convBox, uid);
+    const pub = await pubOf(uid);
+    if (!pub) return appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys');
+    const enc = await encryptText(pub, text);
+    const { error } = await db.sendMessage({ sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
+    if (error) appendBubble('(failed to send)', 'sys');
+    db.bumpStreak(uid);
+};
+
+// ===================== view-once snap player =====================
+const openSnap = async (s, card) => {
+    if (card) { card.disabled = true; card.classList.add('opening'); }
+    let full = null;
+    try {
+        if (s.delivery === 'live') full = await fetchSnap(s.id, s.sender_id);
+        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = await bytesToDataUrl(new Uint8Array(pt)); } }
+    } catch (e) { console.error('[mayfly] open snap', e); }
+    if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
+    const u = s.sender || {};
+    const ov = el(`<div class="player"><img src="${safeMediaUrl(full)}" alt="snap">${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => { const bar = $('.pbar i', ov); bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); });
+    let done = false;
+    const finish = async () => { if (done) return; done = true; clearTimeout(t); ov.remove(); if (full.startsWith('blob:')) URL.revokeObjectURL(full); await burnSnap(s, card); };
+    const t = setTimeout(finish, s.timer * 1000);
+    ov.onclick = finish;
+};
+const burnSnap = async (s, card) => {
+    await db.delSnap(s.id);
+    if (s.delivery === 'relay') sb.storage.from(SNAP_BUCKET).remove([s.id]);
+    inboxByUser[s.sender_id] = (inboxByUser[s.sender_id] || []).filter(x => x.id !== s.id);
+    card?.remove();
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
+
+// ===================== live P2P: media, voice, typing =====================
 const MAX_FILE = 20 * 1024 * 1024;
 const blobToDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
-const BIN = 16 * 1024;
-const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += BIN, i++) { try { dc.send(buf.slice(o, o + BIN)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
+const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += 16384, i++) { try { dc.send(buf.slice(o, o + 16384)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
+const mediaBubble = (m, cls) => {
+    const url = safeMediaUrl(m.data);
+    const inner = m.mediaKind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
+        : m.mediaKind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
+        : m.mediaKind === 'audio' ? `<audio src="${url}" controls></audio>`
+        : `<a class="chatfile" href="${url}" download="${esc(m.name || 'file')}">📎 ${esc(m.name || 'file')}</a>`;
+    return el(`<div class="b ${cls} media">${inner}</div>`);
+};
 const sendFile = async (uid, file, kind) => {
-    const c = chats.get(uid); const logEl = c?.logEl;
-    if (!(c?.conn && c.conn.open)) return bubble(logEl, '(not connected — they may be offline)', 'sys');
-    if (file.size > MAX_FILE) return bubble(logEl, `(too big — max ${Math.round(MAX_FILE / 1e6)} MB)`, 'sys');
-    let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { return bubble(logEl, '(could not read file)', 'sys'); }
-    const id = rand(), meta = { name: file.name || kind, mime: file.type, kind };
+    const c = conns.get(uid);
+    if (!(c && c.open)) { ensureConn(uid); return appendBubble('(they need to be online to receive media)', 'sys'); }
+    if (file.size > MAX_FILE) return appendBubble(`(too big — max ${Math.round(MAX_FILE / 1e6)} MB)`, 'sys');
+    let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { return appendBubble('(could not read file)', 'sys'); }
+    const id = rand(), meta = { name: file.name || kind, mime: file.type, mediaKind: kind };
     c.sendQ = (c.sendQ || Promise.resolve()).then(async () => {
-        try {
-            if (c.binOk) { const buf = await file.arrayBuffer(); c.conn.send({ t: 'file-meta', id, bin: 1, bytes: buf.byteLength, ...meta }); await sendBytes(c.conn, buf); c.conn.send({ t: 'file-done', id }); }
-            else { const chunks = chunkString(dataUrl); c.conn.send({ t: 'file-meta', id, parts: chunks.length, ...meta }); for (let i = 0; i < chunks.length; i++) { c.conn.send({ t: 'file-part', id, i, s: chunks[i] }); if (i % 32 === 0) await drainConn(c.conn); } }
-        } catch (e) { bubble(logEl, '(send failed)', 'sys'); }
+        try { const buf = await file.arrayBuffer(); c.send({ t: 'file-meta', id, bytes: buf.byteLength, ...meta }); await sendBytes(c, buf); c.send({ t: 'file-done', id }); }
+        catch (e) { appendBubble('(send failed)', 'sys'); }
     });
     await c.sendQ;
-    mediaBubble(logEl, { ...meta, data: dataUrl }, 'me'); saveMedia(uid, { me: true, ...meta, data: dataUrl });
+    const m = { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now() };
+    appendMedia(m, 'me'); histPush(uid, m);
+};
+const wireMic = (box, uid) => {
+    let rec = null, stream = null, chunks = [];
+    $('.mic', box).onclick = async () => {
+        if (rec && rec.state === 'recording') return rec.stop();
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
+        chunks = []; rec = new MediaRecorder(stream);
+        rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        rec.onstop = async () => { stream.getTracks().forEach(t => t.stop()); $('.mic', box).classList.remove('recording'); const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); await sendFile(uid, new File([blob], 'voice-note', { type: blob.type }), 'audio'); };
+        rec.start(); $('.mic', box).classList.add('recording');
+    };
 };
 
-const wire = (uid, username, conn) => {
-    const c = chats.get(uid) || { username };
-    c.conn = conn; c.username = username; chats.set(uid, c);
+// P2P data connection for typing + media (text no longer needs it — it's async).
+const wire = (uid, conn) => {
+    conns.set(uid, conn);
     const rx = {}; let binRx = null;
-    const flag = () => { if (!c.logEl) { unread.add(uid); onChange(); if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛 ' + username, { body: 'New message' }); } };
-    conn.on('open', () => { setDot(uid, true); try { conn.send({ t: 'cap', bin: 1 }); } catch (e) {} });
+    conn.on('open', () => { try { conn.send({ t: 'cap' }); } catch (e) {} });
     conn.on('data', (d) => {
         if (!d) return;
-        if (d.t === 'cap')    return void (c.binOk = !!d.bin);
-        if (d.t === 'typing') return setTyping(uid, username + ' is typing…');
-        if (d.t === 'stop')   return setTyping(uid, '');
-        if (d.t === 'msg')    { setTyping(uid, ''); save(uid, { me: false, text: d.text }); if (c.logEl) bubble(c.logEl, d.text, 'them'); else flag(); return; }
-        if (d.t === 'file-meta') { if (d.bin) binRx = { meta: d, chunks: [], ph: progress(c.logEl, d) }; else rx[d.id] = { meta: d, buf: new Array(d.parts), got: 0, ph: progress(c.logEl, d) }; return; }
-        if (d.t === 'file-done' && binRx) { const it = binRx; binRx = null; it.ph?.remove(); blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(data => { const m = { kind: it.meta.kind, name: it.meta.name, mime: it.meta.mime, data }; if (c.logEl) mediaBubble(c.logEl, m, 'them'); else flag(); saveMedia(uid, { me: false, ...m }); }); return; }
-        if (d.t === 'file-part') { const it = rx[d.id]; if (!it || it.buf[d.i] != null) return; it.buf[d.i] = d.s; it.got++; if (it.ph) it.ph.textContent = `receiving ${it.meta.name || it.meta.kind}… ${Math.round(it.got / it.meta.parts * 100)}%`; if (it.got === it.meta.parts) { const m = { kind: it.meta.kind, name: it.meta.name, mime: it.meta.mime, data: it.buf.join('') }; delete rx[d.id]; it.ph?.remove(); if (c.logEl) mediaBubble(c.logEl, m, 'them'); else flag(); saveMedia(uid, { me: false, ...m }); } return; }
+        if (d.t === 'typing') { const el2 = $('#ctyping'); if (el2 && openUid === uid) el2.textContent = 'typing…'; return; }
+        if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
+        if (d.t === 'file-meta') { binRx = { meta: d, chunks: [] }; return; }
+        if (d.t === 'file-done' && binRx) { const it = binRx; binRx = null; blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; if (openUid === uid) appendMedia(m, 'them'); else { unreadMsg.add(uid); onChange(); } histPush(uid, m); if (convBox) renderConvs(convBox, openUid); }); return; }
     });
-    conn.on('chunk', (ab) => { if (!binRx) return; binRx.chunks.push(ab); binRx.got = (binRx.got || 0) + ab.byteLength; if (binRx.ph) binRx.ph.textContent = `receiving ${binRx.meta.name || binRx.meta.kind}… ${Math.round(binRx.got / (binRx.meta.bytes || 1) * 100)}%`; });
-    conn.on('close', () => { setDot(uid, false); if (c.logEl) bubble(c.logEl, '(disconnected)', 'sys'); c.conn = null; });
+    conn.on('chunk', (ab) => { if (binRx) binRx.chunks.push(ab); });
+    conn.on('close', () => { if (conns.get(uid) === conn) conns.delete(uid); });
     conn.on('error', () => {});
 };
-const viewOf = (uid) => chats.get(uid)?.logEl?.closest('.chatview');
-const setDot = (uid, on) => { const v = viewOf(uid); const dot = v && $('.cdot', v); if (dot) dot.style.opacity = on ? '1' : '.25'; };
-const setTyping = (uid, t) => { const v = viewOf(uid); const e = v && $('.ctyping', v); if (e) e.textContent = t; };
+const ensureConn = (uid) => { const c = conns.get(uid); if (c && c.open) return; if (!isOnline(uid)) return; wire(uid, peer.connect(uid, { metadata: { kind: 'dm', user_id: state.me.id, username: state.profile.username } })); };
+export const onIncomingDM = (conn) => { const uid = conn.metadata?.user_id || conn.peer; if (uid) wire(uid, conn); };
+export const reconnectOpenChat = () => { if (openUid) ensureConn(openUid); };
+export const detachAll = () => { openUid = null; threadBox = null; };
+export const bootChat = async () => { await refreshInbox(); await syncMessages(); };
 
-const ensureConn = (uid, username) => { const c = chats.get(uid); if (c?.conn && c.conn.open) return; if (!isOnline(uid)) return; wire(uid, username, peer.connect(uid, { metadata: { kind: 'dm', user_id: state.me.id, username: state.profile.username } })); };
-
-export const openChat = async (uid) => {
-    openUid = uid;
-    let username = chats.get(uid)?.username;
-    if (!username) { const { data } = await db.profileById(uid); username = data?.username || 'friend'; }
-    unread.delete(uid); onChange();
-    app.innerHTML = `<main class="chatview">
-        <div class="chathead">
-          <button class="icon back" data-go="#/chat" aria-label="Back">‹</button>
-          ${avatarHTML(username, null)}
-          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.25'}"></i> ${isOnline(uid) ? 'online' : 'offline — live chat needs them online'}</div></div>
-          <button class="icon callbtn" aria-label="Video call">📹</button>
-        </div>
-        <div class="chatlog"></div>
-        <div class="ctyping"></div>
-        <form class="chatin">
-          <button type="button" class="icon attach" aria-label="Attach photo, video, or file">📎</button>
-          <button type="button" class="icon mic" aria-label="Record a voice note">🎤</button>
-          <input placeholder="Message…" autocomplete="off" aria-label="Message"><button type="submit">Send</button>
-          <input type="file" class="fileinput" hidden>
-        </form>
-      </main>`;
-    const logEl = $('.chatlog');
-    const c = chats.get(uid) || { username }; c.username = username; c.logEl = logEl; chats.set(uid, c);
-    (await hist(uid)).forEach(m => m.kind ? mediaBubble(logEl, m, m.me ? 'me' : 'them') : bubble(logEl, m.text, m.me ? 'me' : 'them'));
-    if (!isOnline(uid)) bubble(logEl, `${username} is offline. Chat is live peer-to-peer — messages send once you're both online.`, 'sys');
-    ensureConn(uid, username);
-    $('.callbtn').onclick = () => callUser(uid, username);
-    const form = $('.chatin'), textInput = $('.chatin input:not(.fileinput)'), fileInput = $('.fileinput'); let tt;
-    $('.attach').onclick = () => fileInput.click();
-    fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };
-    // voice note: tap to start, tap again to stop & send
-    let rec = null, recStream = null, recChunks = [];
-    $('.mic').onclick = async () => {
-        if (rec && rec.state === 'recording') return rec.stop();
-        try { recStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return bubble(logEl, '(microphone blocked)', 'sys'); }
-        recChunks = []; rec = new MediaRecorder(recStream);
-        rec.ondataavailable = (e) => { if (e.data?.size) recChunks.push(e.data); };
-        rec.onstop = async () => { recStream.getTracks().forEach(t => t.stop()); $('.mic').classList.remove('recording'); const blob = new Blob(recChunks, { type: rec.mimeType || 'audio/webm' }); await sendFile(uid, new File([blob], 'voice-note', { type: blob.type }), 'audio'); };
-        rec.start(); $('.mic').classList.add('recording');
-    };
-    form.onsubmit = (e) => {
-        e.preventDefault();
-        const t = textInput.value.trim(); if (!t) return;
-        const cc = chats.get(uid);
-        if (!(cc?.conn && cc.conn.open)) { ensureConn(uid, username); return bubble(logEl, isOnline(uid) ? '(connecting… try again in a second)' : '(they’re offline — messages are live P2P)', 'sys'); }
-        try { cc.conn.send({ t: 'msg', text: t }); bubble(logEl, t, 'me'); save(uid, { me: true, text: t }); textInput.value = ''; } catch (e2) { bubble(logEl, '(send failed)', 'sys'); }
-    };
-    textInput.oninput = () => { const cc = chats.get(uid); if (!(cc?.conn && cc.conn.open)) return; try { cc.conn.send({ t: 'typing' }); } catch (e) {} clearTimeout(tt); tt = setTimeout(() => { try { cc.conn.send({ t: 'stop' }); } catch (e) {} }, 1200); };
-};
-
-export const detachChat = (uid) => { const c = chats.get(uid); if (c) c.logEl = null; };
-export const detachAll = () => { openUid = null; chats.forEach(c => c.logEl = null); };
-
-export const renderChatList = async (into) => {
-    const { data: fr } = await db.friends();
-    const friends = (fr || []).map(f => f.requester_id === state.me.id ? f.addressee : f.requester).filter(Boolean);
-    into.innerHTML = '';
-    if (!friends.length) return void (into.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`);
-    friends.forEach(u => into.appendChild(el(`<button class="urow ${unread.has(u.id) ? 'unread' : ''}" data-go="#/chat/${u.id}">
-        ${avatarHTML(u.username, u.avatar)}
-        <div class="who"><b>${esc(u.username)}</b><div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'tap to chat'}</div></div>
-        ${unread.has(u.id) ? '<i class="unreaddot"></i>' : ''}</button>`)));
-};
-
-export const onIncomingDM = (conn) => { const meta = conn.metadata || {}; const uid = meta.user_id || conn.peer; const username = meta.username || 'someone'; if (uid) wire(uid, username, conn); };
-
-// ===================== 1:1 P2P video calling =====================
+// ===================== 1:1 video calling =====================
 const getMedia = () => navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 let localStream = null, curCall = null;
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
@@ -176,20 +306,12 @@ export const onIncomingCall = (incoming) => {
     if (curCall) return incoming.close();
     const username = incoming.metadata?.username || 'Someone';
     const banner = $('#incall');
-    banner.innerHTML = `<div class="avatar ib">${initial(username)}</div>
-      <div style="flex:1"><b>${esc(username)}</b><div class="muted" style="font-size:12px">Incoming video call…</div></div>
-      <button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button>`;
+    banner.innerHTML = `<div class="avatar ib">${initial(username)}</div><div style="flex:1"><b>${esc(username)}</b><div class="muted" style="font-size:12px">Incoming video call…</div></div><button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button>`;
     banner.classList.add('on');
     const clear = () => banner.classList.remove('on');
     $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };
-    $('#acc', banner).onclick = async () => {
-        clear();
-        try { localStream = await getMedia(); } catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
-        $('#lv').srcObject = localStream; $('#callo').classList.add('on'); setStat('Connecting…');
-        incoming.answer(localStream); wireCallMedia(incoming);
-    };
+    $('#acc', banner).onclick = async () => { clear(); try { localStream = await getMedia(); } catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; } $('#lv').srcObject = localStream; $('#callo').classList.add('on'); setStat('Connecting…'); incoming.answer(localStream); wireCallMedia(incoming); };
 };
-// static call-bar controls (wired once)
 $('#chang').onclick = endCall;
 $('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; $('#cmute').style.opacity = a.enabled ? '1' : '.4'; } };
-$('#ccam').onclick  = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; $('#ccam').style.opacity = v.enabled ? '1' : '.4'; } };
+$('#ccam').onclick = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; $('#ccam').style.opacity = v.enabled ? '1' : '.4'; } };

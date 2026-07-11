@@ -169,6 +169,32 @@ drop policy if exists "mf_story_views_insert" on public.mf_story_views;
 create policy "mf_story_views_insert" on public.mf_story_views for insert with check (auth.uid() = viewer_id);
 
 -- ---------------------------------------------------------------------------
+-- mf_messages: async 1:1 chat. Each row is the message text ENCRYPTED to the
+-- recipient's public key (E2E — server sees only ciphertext). It's ephemeral: the
+-- recipient decrypts + stores it in their own device history, then deletes the row.
+-- So the table only ever holds messages that haven't been delivered yet.
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_messages (
+  id           uuid primary key default gen_random_uuid(),
+  sender_id    uuid not null references public.mf_profiles(id) on delete cascade,
+  recipient_id uuid not null references public.mf_profiles(id) on delete cascade,
+  iv           text not null,
+  eph_pub      text not null,
+  body         text not null,                     -- base64 AES-GCM ciphertext
+  created_at   timestamptz not null default now()
+);
+create index if not exists mf_messages_inbox_idx on public.mf_messages (recipient_id, created_at);
+alter table public.mf_messages enable row level security;
+drop policy if exists "mf_messages_select" on public.mf_messages;
+create policy "mf_messages_select" on public.mf_messages for select
+  using (auth.uid() = sender_id or auth.uid() = recipient_id);
+drop policy if exists "mf_messages_insert" on public.mf_messages;
+create policy "mf_messages_insert" on public.mf_messages for insert with check (auth.uid() = sender_id);
+drop policy if exists "mf_messages_delete" on public.mf_messages;
+create policy "mf_messages_delete" on public.mf_messages for delete
+  using (auth.uid() = sender_id or auth.uid() = recipient_id);
+
+-- ---------------------------------------------------------------------------
 -- Groups: persistent named group chats + mesh video calls. Group TEXT is ephemeral
 -- Realtime Broadcast (never stored); group VIDEO is a full P2P mesh.
 -- ---------------------------------------------------------------------------
@@ -246,7 +272,7 @@ create policy "mf_group_write" on realtime.messages for insert to authenticated 
 do $$
 declare t text;
 begin
-  foreach t in array array['mf_snaps','mf_friends','mf_stories'] loop
+  foreach t in array array['mf_snaps','mf_friends','mf_stories','mf_messages'] loop
     if not exists (select 1 from pg_publication_tables
                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);

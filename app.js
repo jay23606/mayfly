@@ -144,8 +144,8 @@ const compose = async (shot, defaultRecipientId = null) => {
     const isVideo = shot.mime?.startsWith('video/');
     if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
     app.innerHTML = `<main class="composewrap">
-      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(shot.full)}')"`}>
-        ${isVideo ? `<video src="${safeMediaUrl(shot.full)}" autoplay muted loop playsinline></video>` : ''}
+      <div class="preview ${isVideo ? 'video' : ''}" style="background-image:url('${safeMediaUrl(isVideo ? shot.preview : shot.full)}')">
+        ${isVideo ? '<div class="videopreview">▶ Video Snap</div>' : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>

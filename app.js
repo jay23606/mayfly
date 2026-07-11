@@ -216,7 +216,7 @@ const compose = async (shot, defaultRecipientId = null) => {
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
-        viewCamera(defaultRecipientId);
+        location.hash = defaultRecipientId ? '#/c/' + defaultRecipientId : '#/chats';
     };
 };
 
@@ -315,7 +315,7 @@ const renderStoriesBar = async (into) => {
     const meRing = el(`<button class="storyitem">
         <span class="ring ${mine.length ? 'mine' : 'add'}">${mine.length ? avatarHTML(state.profile.username, state.profile.avatar) : '＋'}</span>
         <span class="sname">Your Story</span></button>`);
-    meRing.onclick = () => mine.length ? playStories(storyGroups, 0) : (location.hash = '#/');
+    meRing.onclick = () => mine.length ? playStories(storyGroups, 0) : (location.hash = '#/camera');
     into.appendChild(meRing);
     for (const [uid, items] of byUser) {
         const groupIndex = storyGroups.length;
@@ -537,18 +537,18 @@ const viewMe = () => {
 const tabbar = () => `<nav id="tabbar" aria-label="Primary">
     <button class="tab" data-go="#/chats" aria-label="Chats">💬<span class="badge-count" id="chatdot"></span></button>
     <button class="tab" data-go="#/friends" aria-label="Friends">👥</button>
-    <button class="tab cam" data-go="#/" aria-label="Camera">◉</button>
+    <button class="tab cam" data-go="#/camera" aria-label="Camera">◉</button>
     <button class="tab" data-go="#/me" aria-label="You">${isMediaUrl(state.profile.avatar) ? `<span class="navavatar"><img src="${state.profile.avatar}" alt=""></span>` : `<span class="navavatar">${initial(state.profile.username)}</span>`}</button>
   </nav>`;
-const header = () => `<header><span class="logo" data-go="#/">mayfly 🐛</span><div class="grow"></div><span id="online" class="muted">…</span></header>`;
+const header = () => `<header><span class="logo" data-go="#/chats">mayfly 🐛</span><div class="grow"></div><span id="online" class="muted">…</span></header>`;
 const mountChrome = (force) => {
     if (!state.profile) return;
     if (force) document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
     const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
-    const activeGo = seg === 'c' ? '#/chats' : (seg === 'snap' ? '#/' : ('#/' + seg));
-    $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo || (seg === '' && t.classList.contains('cam'))));
+    const activeGo = (seg === '' || seg === 'c') ? '#/chats' : ((seg === 'snap' || seg === 'groupsnap') ? '#/camera' : ('#/' + seg));
+    $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo));
 };
 const unmountChrome = () => document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
 
@@ -562,11 +562,12 @@ const route = () => {
     if (seg === 'chats') return viewChats();
     if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
+    if (seg === 'camera') return viewCamera();
     if (seg === 'snap' && arg) return viewCamera(arg);
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);
     if (seg === 'group' && arg) return openGroupById(arg);
     if (seg === 'me') return viewMe();
-    return viewCamera();
+    return viewChats();
 };
 const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };
 window.addEventListener('chat-unread', setChatDot);

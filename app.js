@@ -34,7 +34,16 @@ const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        // Chrome and Edge record the combined stream reliably as WebM (VP8 + Opus).
+        // If microphone permission is denied, preserve the working video-only fallback.
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: facing },
+                audio: { echoCancellation: true, noiseSuppression: true },
+            });
+        } catch (audioError) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        }
         v.srcObject = stream; v.play?.();
         $('#camerr').textContent = '';
     } catch (e) {
@@ -98,12 +107,14 @@ const viewCamera = (defaultRecipientId = null) => {
         if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
         const chunks = [];
         const preview = captureVideoPreview();
-        try { recorder = new MediaRecorder(stream); }
+        const captureMime = 'video/webm;codecs=vp8,opus';
+        const options = MediaRecorder.isTypeSupported(captureMime) ? { mimeType: captureMime } : undefined;
+        try { recorder = new MediaRecorder(stream, options); }
         catch (e) { return toast('Could not start video recording.'); }
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
             shoot.classList.remove('recording');
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+            const blob = new Blob(chunks, { type: recorder.mimeType || captureMime });
             recorder = null;
             if (!blob.size) return;
             try {

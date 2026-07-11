@@ -24,6 +24,7 @@ const snapMime = (s) => {
     try { return tag ? decodeURIComponent(tag) : 'image/jpeg'; }
     catch (e) { return 'image/jpeg'; }
 };
+const snapKind = (s) => snapMime(s).startsWith('video/') ? 'video' : 'photo';
 
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
 export const chatUnread = () => {
@@ -77,7 +78,7 @@ export const onSnapInsert = async (row) => {
     if (row.recipient_id !== state.me.id) return;
     (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
     if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
-    else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: 'You got a Snap!' });
+    else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: `New ${snapKind(row) === 'video' ? 'video' : 'photo'} Snap!` });
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };
@@ -98,17 +99,19 @@ export const renderConvs = async (box, activeUid) => {
     // build each conversation's summary
     const rows = await Promise.all(friends.map(async (u) => {
         const h = await histGet(u.id);
-        const snaps = inboxByUser[u.id]?.length || 0;
+        const pending = inboxByUser[u.id] || [];
+        const snaps = pending.length;
+        const kind = snaps ? snapKind(pending[0]) : null;
         const lastAt = h.length ? h[h.length - 1].at : 0;
         const unread = snaps > 0 || unreadMsg.has(u.id);
-        const status = snaps ? `📩 New Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
-        return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps };
+        const status = snaps ? `New ${kind === 'video' ? 'Video' : 'Photo'} Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
+        return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps, kind };
     }));
     rows.sort((a, b) => (b.unread - a.unread) || (b.lastAt - a.lastAt));
     box.innerHTML = '';
     if (!rows.length) { box.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`; return; }
-    rows.forEach(({ u, unread, status, snaps }) => {
-        const row = el(`<button class="conv ${u.id === activeUid ? 'active' : ''} ${unread ? 'unread' : ''}" data-go="#/c/${u.id}">
+    rows.forEach(({ u, unread, status, snaps, kind }) => {
+        const row = el(`<button class="conv ${u.id === activeUid ? 'active' : ''} ${unread ? 'unread' : ''} ${kind ? 'snap-' + kind : ''}" data-go="#/c/${u.id}">
             ${avatarHTML(u.username, u.avatar)}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
@@ -182,7 +185,8 @@ const renderThreadBody = async (uid) => {
     body.scrollTop = body.scrollHeight;
 };
 const snapCard = (s) => {
-    const card = el(`<button class="snapcard them"><span class="sq">◼</span> Tap to view Snap <span class="sqt">${ago(s.created_at)}</span></button>`);
+    const kind = snapKind(s), label = kind === 'video' ? 'Video Snap' : 'Photo Snap';
+    const card = el(`<button class="snapcard ${kind} them"><span class="sq">${kind === 'video' ? '▶' : '●'}</span> Tap to view ${label} <span class="sqt">${ago(s.created_at)}</span></button>`);
     card.onclick = () => openSnap(s, card);
     return card;
 };

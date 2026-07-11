@@ -244,7 +244,10 @@ main.chats{max-width:960px;padding:0;display:flex;height:calc(100dvh - 56px - va
 .tbody{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
 .threadhint{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
 .snapcard{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
-.snapcard .sq{color:var(--accent2)}
+.snapcard.photo{border-color:#ff3b5c;background:#ff3b5c18}
+.snapcard.video{border-color:#9b6cff;background:#9b6cff18}
+.snapcard.photo .sq,.conv.snap-photo .sub.hot{color:#ff5572}
+.snapcard.video .sq,.conv.snap-video .sub.hot{color:#ae8cff}
 .snapcard .sqt{color:var(--muted);font-weight:400;font-size:12px}
 .snapcard.opening{opacity:.5}
 .ctyping{min-height:0;padding:2px 14px;color:var(--muted);font-size:12px}

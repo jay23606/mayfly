@@ -71,7 +71,7 @@ const processImage = async (blob) => {
     const im = await decode(blob);
     const preview = scaleTo(im, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
     const full    = scaleTo(im, FULL_PX).toDataURL('image/jpeg', FULL_Q);
-    const out = { preview, full, w: im.width, h: im.height };
+    const out = { preview, full, w: im.width, h: im.height, mime: 'image/jpeg' };
     im.close?.();
     return out;
 };
@@ -81,8 +81,21 @@ const processCanvas = (canvas) => {
     return {
         preview: scaleTo(im, PREVIEW_PX).toDataURL('image/jpeg', 0.5),
         full:    scaleTo(im, FULL_PX).toDataURL('image/jpeg', FULL_Q),
-        w: im.width, h: im.height,
+        w: im.width, h: im.height, mime: 'image/jpeg',
     };
+};
+// A video snap keeps its original recording and derives a tiny image preview for the inbox.
+const processVideo = async (blob) => {
+    const mime = blob.type || 'video/webm';
+    const url = URL.createObjectURL(blob);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    try {
+        await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+        const preview = scaleTo(v, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
+        const full = await bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), mime);
+        return { preview, full, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration };
+    } finally { URL.revokeObjectURL(url); }
 };
 // Avatars are small enough to store in the DB so they always show.
 const AVATAR_PX = 128;
@@ -108,5 +121,5 @@ const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
-    processImage, processCanvas, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
+    processImage, processCanvas, processVideo, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
     isMediaUrl, safeMediaUrl, chunkString, mimeKind, state, presenceUsers, fullCache, isOnline };

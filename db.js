@@ -41,7 +41,7 @@ const db = {
     pendingRelayTo: (recipient_id) => sb.from('mf_snaps')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
-        .eq('delivery', 'relay').is('viewed_at', null),
+        .like('delivery', 'relay%').is('viewed_at', null),
     addSnap: (row) => sb.from('mf_snaps').insert(row).select().maybeSingle(),
     delSnap: (id) => sb.from('mf_snaps').delete().eq('id', id),
     // snaps I sent that have now been opened / expired → clean up my device copies

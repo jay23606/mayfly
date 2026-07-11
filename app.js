@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl,
-    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, makeAvatar,
+    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeAvatar,
     idb, dataUrlToBytes, bytesToDataUrl, STORY_TTL_H } from './core.js';
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
@@ -50,16 +50,17 @@ const viewCamera = (defaultRecipientId = null) => {
       </div>
       <div class="cambar">
         <button class="cbtn ghost" id="pick" title="From gallery" aria-label="Pick from gallery">🖼️</button>
-        <button class="shutter" id="shoot" aria-label="Capture"></button>
+        <button class="shutter" id="shoot" aria-label="Take photo; hold to record video"></button>
         <button class="cbtn ghost" id="flip" title="Flip camera" aria-label="Flip camera">🔄</button>
-        <input id="file" type="file" accept="image/*" hidden>
+        <input id="file" type="file" accept="image/*,video/*" hidden>
       </div>
     </main>`;
     $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
         const f = $('#file').files[0]; if (!f) return;
-        try { compose(await processImage(f), defaultRecipientId); } catch (e) { toast('Could not read that image.'); }
+        try { compose(f.type.startsWith('video/') ? await processVideo(f) : await processImage(f), defaultRecipientId); }
+        catch (e) { toast('Could not read that media.'); }
     };
     $('#shoot').onclick = () => {
         const v = $('#cam'); if (!v || !v.videoWidth) return toast('Camera not ready — use 🖼️ instead.');
@@ -69,6 +70,55 @@ const viewCamera = (defaultRecipientId = null) => {
         ctx.drawImage(v, 0, 0);
         compose(processCanvas(c), defaultRecipientId);
     };
+    const shoot = $('#shoot');
+    shoot.onclick = null; // pointer handling below distinguishes a tap from a hold.
+    const takePhoto = () => {
+        const v = $('#cam'); if (!v || !v.videoWidth) return toast('Camera not ready.');
+        const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
+        const ctx = c.getContext('2d');
+        if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+        ctx.drawImage(v, 0, 0);
+        compose(processCanvas(c), defaultRecipientId);
+    };
+    let holdTimer = null, recorder = null, maxRecordTimer = null, longPress = false;
+    const stopRecording = () => {
+        clearTimeout(maxRecordTimer);
+        if (recorder?.state === 'recording') recorder.stop();
+    };
+    const startRecording = async () => {
+        if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
+        let audioStream = null;
+        try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {}
+        if (!longPress) { audioStream?.getTracks().forEach(t => t.stop()); return; }
+        const chunks = [];
+        const recordingStream = new MediaStream([...stream.getVideoTracks(), ...(audioStream?.getAudioTracks() || [])]);
+        try { recorder = new MediaRecorder(recordingStream); }
+        catch (e) { audioStream?.getTracks().forEach(t => t.stop()); return toast('Could not start video recording.'); }
+        recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        recorder.onstop = async () => {
+            shoot.classList.remove('recording');
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+            recorder = null;
+            audioStream?.getTracks().forEach(t => t.stop());
+            if (!blob.size) return;
+            try { compose(await processVideo(blob), defaultRecipientId); }
+            catch (e) { toast('Could not prepare that video.'); }
+        };
+        recorder.start();
+        shoot.classList.add('recording');
+        maxRecordTimer = setTimeout(stopRecording, 10000);
+    };
+    shoot.onpointerdown = (e) => {
+        e.preventDefault(); shoot.setPointerCapture?.(e.pointerId); longPress = false;
+        holdTimer = setTimeout(() => { longPress = true; startRecording(); }, 300);
+    };
+    const releaseShutter = () => {
+        clearTimeout(holdTimer);
+        const wasLongPress = longPress; longPress = false;
+        if (wasLongPress) stopRecording(); else takePhoto();
+    };
+    shoot.onpointerup = releaseShutter;
+    shoot.onpointercancel = releaseShutter;
     startCamera();
 };
 
@@ -76,8 +126,11 @@ const viewCamera = (defaultRecipientId = null) => {
 let timer = 5;
 const compose = async (shot, defaultRecipientId = null) => {
     stopStream();
+    const isVideo = shot.mime?.startsWith('video/');
+    if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
     app.innerHTML = `<main class="composewrap">
-      <div class="preview" style="background-image:url('${safeMediaUrl(shot.full)}')">
+      <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(shot.full)}')"`}>
+        ${isVideo ? `<video src="${safeMediaUrl(shot.full)}" autoplay muted loop playsinline></video>` : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
@@ -102,7 +155,10 @@ const compose = async (shot, defaultRecipientId = null) => {
     box.innerHTML = '';
     // "My Story" — broadcast to all friends for 24h (always available)
     const storyChip = el(`<button class="recip story"><span class="ring">⚡</span><span>My Story</span></button>`);
-    storyChip.onclick = () => { toStory = !toStory; storyChip.classList.toggle('on', toStory); refreshSend(); };
+    storyChip.onclick = () => {
+        if (isVideo) return toast('Video snaps can be sent directly to friends, not to Stories yet.');
+        toStory = !toStory; storyChip.classList.toggle('on', toStory); refreshSend();
+    };
     box.appendChild(storyChip);
     if (!list.length) box.appendChild(el(`<div class="empty" style="width:100%">No friends yet — <a href="#/friends">add some →</a> or just post to your Story.</div>`));
     list.forEach(u => {
@@ -133,10 +189,11 @@ const compose = async (shot, defaultRecipientId = null) => {
 const sendSnap = async (shot, u, caption, secs) => {
     const base = { sender_id: state.me.id, recipient_id: u.id, preview: shot.preview,
         caption, w: shot.w, h: shot.h, timer: secs };
+    const taggedDelivery = (kind) => shot.mime?.startsWith('video/') ? `${kind}:${encodeURIComponent(shot.mime)}` : kind;
     try {
         if (isOnline(u.id)) {
             const id = uuid();
-            const { error } = await db.addSnap({ ...base, id, delivery: 'live' });
+            const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
             if (error) throw error;
             await idb.set('snap:' + id, shot.full);   // held here; streamed P2P when they open it
             db.bumpStreak(u.id);
@@ -152,7 +209,7 @@ const sendSnap = async (shot, u, caption, secs) => {
         const { ct, iv, ephPub } = await encryptFor(JSON.parse(u.pubkey), bytes);
         const up = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ct]), { contentType: 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;
-        const { error } = await db.addSnap({ ...base, id, delivery: 'relay', iv, eph_pub: ephPub });
+        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay'), iv, eph_pub: ephPub });
         if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
         db.bumpStreak(u.id);
         return true;

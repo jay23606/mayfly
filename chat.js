@@ -17,6 +17,13 @@ let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
 let threadBox = null, convBox = null;
+// Legacy photo snaps use plain "live" / "relay". Video snaps retain their MIME type
+// in the existing delivery value, avoiding a database migration.
+const snapMime = (s) => {
+    const tag = s.delivery?.split(':')[1];
+    try { return tag ? decodeURIComponent(tag) : 'image/jpeg'; }
+    catch (e) { return 'image/jpeg'; }
+};
 
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
 export const chatUnread = () => {
@@ -200,22 +207,25 @@ const openSnap = async (s, card) => {
     if (card) { card.disabled = true; card.classList.add('opening'); }
     let full = null;
     try {
-        if (s.delivery === 'live') full = await fetchSnap(s.id, s.sender_id);
-        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = await bytesToDataUrl(new Uint8Array(pt)); } }
+        if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id);
+        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = await bytesToDataUrl(new Uint8Array(pt), snapMime(s)); } }
     } catch (e) { console.error('[mayfly] open snap', e); }
     if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
     const u = s.sender || {};
-    const ov = el(`<div class="player"><img src="${safeMediaUrl(full)}" alt="snap">${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
+    const video = snapMime(s).startsWith('video/');
+    const media = video ? `<video src="${safeMediaUrl(full)}" autoplay playsinline></video>` : `<img src="${safeMediaUrl(full)}" alt="snap">`;
+    const ov = el(`<div class="player">${media}${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
     document.body.appendChild(ov);
     requestAnimationFrame(() => { const bar = $('.pbar i', ov); bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); });
     let done = false;
     const finish = async () => { if (done) return; done = true; clearTimeout(t); ov.remove(); if (full.startsWith('blob:')) URL.revokeObjectURL(full); await burnSnap(s, card); };
     const t = setTimeout(finish, s.timer * 1000);
+    if (video) $('video', ov).onended = finish;
     ov.onclick = finish;
 };
 const burnSnap = async (s, card) => {
     await db.delSnap(s.id);
-    if (s.delivery === 'relay') sb.storage.from(SNAP_BUCKET).remove([s.id]);
+    if (s.delivery?.startsWith('relay')) sb.storage.from(SNAP_BUCKET).remove([s.id]);
     inboxByUser[s.sender_id] = (inboxByUser[s.sender_id] || []).filter(x => x.id !== s.id);
     card?.remove();
     if (convBox) renderConvs(convBox, openUid);

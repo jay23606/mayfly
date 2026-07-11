@@ -138,11 +138,14 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 /* ---------- story player ---------- */
 .player.stories{background:#000;flex-direction:column}
 .player.stories img{position:absolute;inset:0;margin:auto;max-height:100%;transition:filter .3s}
-.segs{position:absolute;top:calc(8px + env(safe-area-inset-top));left:8px;right:8px;display:flex;gap:4px;z-index:3}
+.segs{position:absolute;top:calc(8px + env(safe-area-inset-top));left:8px;right:52px;display:flex;gap:4px;z-index:3}
 .segs span{flex:1;height:3px;background:#ffffff33;border-radius:2px;overflow:hidden}
 .segs i{display:block;height:100%;width:0;background:#fff}
 .tapzones{position:absolute;inset:0;display:flex;z-index:2}
 .tz{flex:1}.tz.right{flex:2}
+.storyclose,.storynext{position:absolute;z-index:5;width:34px;height:34px;border:0;border-radius:50%;background:#0008;color:#fff;font-size:28px;line-height:30px;cursor:pointer}
+.storyclose{top:calc(4px + env(safe-area-inset-top));right:10px}
+.storynext{top:50%;right:10px;transform:translateY(-50%);font-size:34px}
 .viewers{position:absolute;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));color:#fff;font-size:13px;z-index:4;text-shadow:0 1px 6px #000}
 
 /* ---------- chat ---------- */

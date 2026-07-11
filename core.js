@@ -11,6 +11,7 @@ const PREVIEW_PX   = 24;    // blurred LQIP shown in the inbox before you open a
 const FULL_PX      = 1080;  // longest edge of the full snap image (P2P / encrypted)
 const FULL_Q       = 0.85;  // JPEG quality of the full snap
 const SNAP_TTL_H   = 24;    // a snap self-destructs this many hours after it's sent
+const STORY_TTL_H  = 24;    // stories are visible for one day
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -106,6 +107,6 @@ const presenceUsers = {};                                 // user_id -> { userna
 const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
 
-export { sb, SNAP_BUCKET, SNAP_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
+export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
     processImage, processCanvas, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
     isMediaUrl, safeMediaUrl, chunkString, mimeKind, state, presenceUsers, fullCache, isOnline };

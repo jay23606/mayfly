@@ -106,7 +106,7 @@ export const renderConvs = async (box, activeUid) => {
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
             <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">◉</span></button>`);
-        $('.camicon', row).onclick = (e) => { e.preventDefault(); e.stopPropagation(); location.hash = '#/'; };
+        $('.camicon', row).onclick = (e) => { e.preventDefault(); e.stopPropagation(); location.hash = '#/snap/' + u.id; };
         box.appendChild(row);
     });
 };
@@ -138,7 +138,7 @@ export const openConversation = async (box, uid) => {
         </form>
       </div>`;
     $('.callbtn', box).onclick = () => callUser(uid, username);
-    $('.snapbtn', box).onclick = () => { location.hash = '#/'; };
+    $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
     const fileInput = $('.fileinput', box);
     $('.attach', box).onclick = () => fileInput.click();
     fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };

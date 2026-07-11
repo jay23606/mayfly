@@ -62,7 +62,10 @@ const db = {
     addStory: (row) => sb.from('mf_stories').insert(row).select().maybeSingle(),
     activeStories: () => sb.from('mf_stories').select('*, author:user_id(' + PROF + ')')
         .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }),
-    myStories: () => sb.from('mf_stories').select('id').eq('user_id', state.me.id),
+    // Keep only active rows when reconciling device-only full images. Expired stories
+    // stay invisible even before a server-side cleanup job removes their metadata.
+    myStories: () => sb.from('mf_stories').select('id').eq('user_id', state.me.id)
+        .gt('expires_at', new Date().toISOString()),
     delStory: (id) => sb.from('mf_stories').delete().eq('id', id),
     viewStory: (story_id) => sb.from('mf_story_views').upsert({ story_id, viewer_id: state.me.id }),
     myViewedStories: () => sb.from('mf_story_views').select('story_id').eq('viewer_id', state.me.id),

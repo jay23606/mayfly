@@ -1,6 +1,6 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl,
     safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, makeAvatar,
-    idb, dataUrlToBytes, bytesToDataUrl } from './core.js';
+    idb, dataUrlToBytes, bytesToDataUrl, STORY_TTL_H } from './core.js';
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
@@ -41,7 +41,7 @@ const startCamera = async () => {
         $('#camerr').innerHTML = 'Camera unavailable. <b>Tap the photo icon</b> to pick from your gallery instead.';
     }
 };
-const viewCamera = () => {
+const viewCamera = (defaultRecipientId = null) => {
     stopStream();
     app.innerHTML = `<main class="camwrap">
       <div class="viewport">
@@ -59,7 +59,7 @@ const viewCamera = () => {
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
         const f = $('#file').files[0]; if (!f) return;
-        try { compose(await processImage(f)); } catch (e) { toast('Could not read that image.'); }
+        try { compose(await processImage(f), defaultRecipientId); } catch (e) { toast('Could not read that image.'); }
     };
     $('#shoot').onclick = () => {
         const v = $('#cam'); if (!v || !v.videoWidth) return toast('Camera not ready — use 🖼️ instead.');
@@ -67,14 +67,14 @@ const viewCamera = () => {
         const ctx = c.getContext('2d');
         if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }   // un-mirror the selfie
         ctx.drawImage(v, 0, 0);
-        compose(processCanvas(c));
+        compose(processCanvas(c), defaultRecipientId);
     };
     startCamera();
 };
 
 // ===================== compose: caption, timer, choose friends, send =====================
 let timer = 5;
-const compose = async (shot) => {
+const compose = async (shot, defaultRecipientId = null) => {
     stopStream();
     app.innerHTML = `<main class="composewrap">
       <div class="preview" style="background-image:url('${safeMediaUrl(shot.full)}')">
@@ -88,7 +88,7 @@ const compose = async (shot) => {
         <button class="btn send" id="send" disabled>Send ▸</button>
       </div>
     </main>`;
-    $('#retake').onclick = viewCamera;
+    $('#retake').onclick = () => viewCamera(defaultRecipientId);
     $$('.tchip').forEach(b => b.onclick = () => { timer = +b.dataset.t; $$('.tchip').forEach(x => x.classList.toggle('on', x === b)); });
     const chosen = new Set();
     let toStory = false;
@@ -97,6 +97,8 @@ const compose = async (shot) => {
     const { data: friends } = await db.friends();
     const box = $('#recips'); if (!box) return;
     const list = (friends || []).map(f => otherOf(f)).filter(Boolean);
+    // A Snap started from a chat or a friend row keeps that person selected.
+    if (list.some(u => u.id === defaultRecipientId)) chosen.add(defaultRecipientId);
     box.innerHTML = '';
     // "My Story" — broadcast to all friends for 24h (always available)
     const storyChip = el(`<button class="recip story"><span class="ring">⚡</span><span>My Story</span></button>`);
@@ -104,7 +106,7 @@ const compose = async (shot) => {
     box.appendChild(storyChip);
     if (!list.length) box.appendChild(el(`<div class="empty" style="width:100%">No friends yet — <a href="#/friends">add some →</a> or just post to your Story.</div>`));
     list.forEach(u => {
-        const chip = el(`<button class="recip" data-uid="${u.id}">${avatarHTML(u.username, u.avatar)}<span>${esc(u.username)}</span>${isOnline(u.id) ? '<i class="dot"></i>' : ''}</button>`);
+        const chip = el(`<button class="recip ${chosen.has(u.id) ? 'on' : ''}" data-uid="${u.id}">${avatarHTML(u.username, u.avatar)}<span>${esc(u.username)}</span>${isOnline(u.id) ? '<i class="dot"></i>' : ''}</button>`);
         chip.onclick = () => {
             chip.classList.toggle('on');
             chosen.has(u.id) ? chosen.delete(u.id) : chosen.add(u.id);
@@ -112,6 +114,7 @@ const compose = async (shot) => {
         };
         box.appendChild(chip);
     });
+    refreshSend();
     send.onclick = async () => {
         send.disabled = true; send.textContent = 'Sending…';
         const caption = $('#cap').value.trim();
@@ -121,7 +124,7 @@ const compose = async (shot) => {
         for (const u of targets) { const r = await sendSnap(shot, u, caption, timer); if (r === true) { ok++; noteSentSnap(u.id); } else if (r === 'cap') blocked++; }
         if (ok) toast(`Sent 🐛`);
         if (blocked) toast('Some friends already have an unopened snap from you.');
-        viewCamera();
+        viewCamera(defaultRecipientId);
     };
 };
 
@@ -161,7 +164,8 @@ const sendSnap = async (shot, u, caption, secs) => {
 const postStory = async (shot, caption) => {
     try {
         const id = uuid();
-        const { error } = await db.addStory({ id, user_id: state.me.id, preview: shot.preview, caption, w: shot.w, h: shot.h });
+        const { error } = await db.addStory({ id, user_id: state.me.id, preview: shot.preview, caption, w: shot.w, h: shot.h,
+            expires_at: new Date(Date.now() + STORY_TTL_H * 60 * 60 * 1000).toISOString() });
         if (error) throw error;
         await idb.set('story:' + id, shot.full);
         return true;
@@ -179,38 +183,49 @@ const renderStoriesBar = async (into) => {
     (stories || []).forEach(s => { if (!byUser.has(s.user_id)) byUser.set(s.user_id, []); byUser.get(s.user_id).push(s); });
     const mine = byUser.get(state.me.id) || [];
     byUser.delete(state.me.id);
+    const storyGroups = mine.length ? [{ items: mine, mine: true }] : [];
     into.innerHTML = '';
     // "Your Story" — either your ring, or a ＋ to add
     const meRing = el(`<button class="storyitem">
         <span class="ring ${mine.length ? 'mine' : 'add'}">${mine.length ? avatarHTML(state.profile.username, state.profile.avatar) : '＋'}</span>
         <span class="sname">Your Story</span></button>`);
-    meRing.onclick = () => mine.length ? playStories(mine, true) : (location.hash = '#/');
+    meRing.onclick = () => mine.length ? playStories(storyGroups, 0) : (location.hash = '#/');
     into.appendChild(meRing);
     for (const [uid, items] of byUser) {
+        const groupIndex = storyGroups.length;
+        storyGroups.push({ items, mine: false });
         const a = items[0].author || {};
         const allSeen = items.every(s => seen.has(s.id));
         const ring = el(`<button class="storyitem"><span class="ring ${allSeen ? 'seen' : 'fresh'}">${avatarHTML(a.username, a.avatar)}</span><span class="sname">${esc(a.username || '')}</span></button>`);
-        ring.onclick = () => playStories(items, false);
+        ring.onclick = () => playStories(storyGroups, groupIndex);
         into.appendChild(ring);
     }
     if (!mine.length && !byUser.size) into.innerHTML = `<div class="muted tiny" style="padding:10px 4px">No stories yet — tap ◉ and post to <b>My Story</b>.</div>`;
 };
 
-// Full-screen sequential story player (tap right = next, left = back, hold-free auto-advance).
-const playStories = (items, mine) => {
-    let i = 0, timerId = null;
+// Full-screen story player. It advances through each person's stories, then the next person.
+const playStories = (groups, startGroup = 0) => {
+    if (!groups.length) return;
+    let i = 0, groupIndex = startGroup, timerId = null, items, mine;
     const ov = el(`<div class="player stories"><div class="segs"></div>
         <img alt="story"><div class="pcap"></div><div class="pname"></div>
         <div class="tapzones"><div class="tz left"></div><div class="tz right"></div></div>
+        <button class="storyclose" aria-label="Close stories" title="Close">×</button>
+        <button class="storynext" aria-label="Next story" title="Next story">›</button>
         <div class="viewers"></div></div>`);
     document.body.appendChild(ov);
     const img = $('img', ov), segs = $('.segs', ov);
-    segs.innerHTML = items.map((_, k) => `<span><i data-seg="${k}"></i></span>`).join('');
-    const close = () => { clearTimeout(timerId); ov.remove(); };
+    const close = () => { clearTimeout(timerId); document.removeEventListener('keydown', onKeydown); ov.remove(); };
+    const setGroup = (nextGroup, atEnd = false) => {
+        groupIndex = nextGroup;
+        ({ items, mine } = groups[groupIndex]);
+        segs.innerHTML = items.map((_, k) => `<span><i data-seg="${k}"></i></span>`).join('');
+        show(atEnd ? items.length - 1 : 0);
+    };
     const show = async (k) => {
         clearTimeout(timerId);
-        if (k < 0) k = 0;
-        if (k >= items.length) return close();
+        if (k < 0) return groupIndex > 0 ? setGroup(groupIndex - 1, true) : show(0);
+        if (k >= items.length) return groupIndex < groups.length - 1 ? setGroup(groupIndex + 1) : close();
         i = k;
         segs.querySelectorAll('i').forEach((s, j) => { s.style.transition = 'none'; s.style.width = j < k ? '100%' : '0'; });
         const s = items[k];
@@ -219,8 +234,10 @@ const playStories = (items, mine) => {
         img.style.filter = 'blur(14px)'; img.src = safeMediaUrl(s.preview);
         if (!mine) db.viewStory(s.id);
         // pull the full image P2P (from our own IndexedDB if it's ours)
+        const shownGroup = groupIndex;
         let full = mine ? await idb.get('story:' + s.id) : await fetchSnap(s.id, s.user_id);
-        if (full && items[i] === s) { img.src = safeMediaUrl(full); img.style.filter = 'none'; }
+        if (shownGroup !== groupIndex || i !== k) return;
+        if (full) { img.src = safeMediaUrl(full); img.style.filter = 'none'; }
         if (mine) showViewers(s.id);
         // advance the current segment bar, then move on
         requestAnimationFrame(() => { const bar = segs.querySelector(`i[data-seg="${k}"]`); if (bar) { bar.style.transition = 'width 5s linear'; bar.style.width = '100%'; } });
@@ -231,10 +248,18 @@ const playStories = (items, mine) => {
         const box = $('.viewers', ov);
         box.textContent = `👁 ${(data || []).length}` + ((data || []).length ? ' · ' + data.slice(0, 3).map(v => v.viewer?.username).filter(Boolean).join(', ') : '');
     };
+    const onKeydown = (e) => {
+        if (e.key === 'Escape') close();
+        if (e.key === 'ArrowRight') show(i + 1);
+        if (e.key === 'ArrowLeft') show(i - 1);
+    };
     $('.tz.right', ov).onclick = () => show(i + 1);
     $('.tz.left', ov).onclick = () => show(i - 1);
+    $('.storyclose', ov).onclick = close;
+    $('.storynext', ov).onclick = () => show(i + 1);
     $('.viewers', ov).onclick = (e) => e.stopPropagation();
-    show(0);
+    document.addEventListener('keydown', onKeydown);
+    setGroup(startGroup);
 };
 
 // ===================== chats (unified conversations: snaps + chat) =====================
@@ -341,7 +366,7 @@ const renderFriends = async () => {
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
             <div class="acts"><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
-        $('.snapbtn', row).onclick = () => { location.hash = '#/'; };   // camera; they pick recipients there
+        $('.snapbtn', row).onclick = () => { location.hash = '#/snap/' + u.id; };
         box.appendChild(row);
     });
 };
@@ -394,7 +419,7 @@ const mountChrome = (force) => {
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
     const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
-    const activeGo = seg === 'c' ? '#/chats' : ('#/' + seg);
+    const activeGo = seg === 'c' ? '#/chats' : (seg === 'snap' ? '#/' : ('#/' + seg));
     $$('#tabbar .tab').forEach(t => t.classList.toggle('active', t.dataset.go === activeGo || (seg === '' && t.classList.contains('cam'))));
 };
 const unmountChrome = () => document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
@@ -409,6 +434,7 @@ const route = () => {
     if (seg === 'chats') return viewChats();
     if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
+    if (seg === 'snap' && arg) return viewCamera(arg);
     if (seg === 'group' && arg) return openGroupById(arg);
     if (seg === 'me') return viewMe();
     return viewCamera();

@@ -8,6 +8,8 @@ import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll,
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
+const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
+const RELAY_TTL_DAYS = 7;    // an offline snap self-destructs a week after it's sent if never opened
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
 // Mobile browser chrome can change the visible viewport while a thread is being
 // pulled or scrolled. Drive chat layout from VisualViewport so its composer stays
@@ -272,7 +274,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
         // Friends receive an individual Snap; groups receive it in their chat only.
         const targets = list.filter(u => directIds.includes(u.id));
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
-        let ok = 0, blocked = 0, novideo = 0;
+        let ok = 0, blocked = 0, novideo = 0, toomany = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
         let done = 0;
@@ -284,6 +286,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
                 if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
                 else if (r === 'novideo') novideo++;
+                else if (r === 'toomany') toomany++;
             });
             done += batch.length;
         }
@@ -295,7 +298,8 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
             }
         }
         // one toast wins (it replaces), so prefer the most useful message
-        if (novideo) toast(`Video snaps only send to friends who are online${ok ? ` · sent ${ok}` : ''}.`);
+        if (toomany) toast(`You've hit ${RELAY_LIMIT} unopened offline snaps${ok ? ` · sent ${ok}` : ''}. Some couldn't be sent until they're opened or expire.`);
+        else if (novideo) toast(`Video snaps only send to friends who are online${ok ? ` · sent ${ok}` : ''}.`);
         else if (ok) toast(`Sent 🐛`);
         else if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
@@ -325,9 +329,12 @@ const sendSnap = async (shot, u, caption, secs) => {
         }
         // offline → relay. Video is live-only (no small cap fits a clip); images only.
         if (kind === 'video') return 'novideo';
-        // Enforce the one-pending-per-recipient cap.
+        // Enforce the one-pending-per-recipient cap...
         const { count } = await db.pendingRelayTo(u.id);
         if (count && count >= 1) return 'cap';
+        // ...and a hard per-sender ceiling of 100 outstanding offline snaps (≤100×50 KB in Storage).
+        const { count: total } = await db.pendingRelayTotal();
+        if (total && total >= RELAY_LIMIT) return 'toomany';
         if (!u.pubkey) { toast(`${u.username} hasn't finished setting up mayfly.`); return false; }
         const id = uuid();
         // Re-encode to a WebP that fits the relay budget (the live copy stays full-res).
@@ -335,7 +342,9 @@ const sendSnap = async (shot, u, caption, secs) => {
         const { ct, iv, ephPub } = await encryptFor(JSON.parse(u.pubkey), bytes);
         const up = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ct]), { contentType: 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;
-        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay', mime), iv, eph_pub: ephPub });
+        // Offline snaps get a week to be opened (live snaps keep the 24h default).
+        const expires_at = new Date(Date.now() + RELAY_TTL_DAYS * 24 * 3600 * 1000).toISOString();
+        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay', mime), iv, eph_pub: ephPub, expires_at });
         if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
         db.bumpStreak(u.id);
         return { id, kind };
@@ -694,6 +703,15 @@ const startRealtime = () => {
 // (a snap was opened, or a story expired).
 const sweepLocal = async () => {
     try {
+        // No server cron, so each client garbage-collects the expired snaps it's party to:
+        // delete the rows and, for relays, remove the encrypted Storage blobs. This keeps
+        // unopened-and-expired offline snaps from accumulating in the database or the bucket.
+        const { data: expired } = await db.myExpiredSnaps();
+        if (expired?.length) {
+            const relayIds = expired.filter(r => r.delivery?.startsWith('relay')).map(r => r.id);
+            if (relayIds.length) { try { await sb.storage.from(SNAP_BUCKET).remove(relayIds); } catch (e) {} }
+            await db.delSnaps(expired.map(r => r.id));
+        }
         const [{ data: snaps }, { data: stories }, keys] = await Promise.all([db.mySpentSnaps(), db.myStories(), idb.keys()]);
         const live = new Set([...(snaps || []).map(r => 'snap:' + r.id), ...(stories || []).map(r => 'story:' + r.id)]);
         for (const k of keys) if (typeof k === 'string' && (k.startsWith('snap:') || k.startsWith('story:')) && !live.has(k)) idb.del(k);

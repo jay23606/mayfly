@@ -11,7 +11,7 @@ const PREVIEW_PX   = 24;    // blurred LQIP shown in the inbox before you open a
 const FULL_PX      = 1080;  // longest edge of the full snap image (P2P / encrypted)
 const FULL_Q       = 0.85;  // JPEG quality of the full snap
 const STORY_PREVIEW_MAX = 20 * 1024; // maximum database bytes for an offline Story preview
-const RELAY_MAX = 100 * 1024;        // maximum bytes for an encrypted offline relay snap (keeps Storage bounded)
+const RELAY_MAX = 50 * 1024;         // maximum bytes for an encrypted offline relay snap (keeps Storage bounded)
 const SNAP_TTL_H   = 24;    // a snap self-destructs this many hours after it's sent
 const STORY_TTL_H  = 24;    // stories are visible for one day
 

@@ -18,8 +18,19 @@ const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const setGroupName = (gp, name) => {
     gp.name = name;
     gp.group.name = name;
-    const title = gp.node && $('.gname', gp.node);
+    const title = gp.node && $('.group-title', gp.node);
     if (title) title.textContent = name;
+};
+const promptGroupName = async (group) => {
+    const next = window.prompt('Group name', group.name || 'Group');
+    if (next === null) return null;
+    const name = next.trim().slice(0, 60);
+    if (!name) { toast('Group name cannot be empty.'); return null; }
+    if (name === group.name) return null;
+    const { error } = await db.renameGroup(group.id, name);
+    if (error) { toast('Could not rename the group.'); return null; }
+    group.name = name;
+    return name;
 };
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
 const notifyGroup = (gp, body) => { if (!gp.node && window.Notification?.permission === 'granted') new Notification(gp.name || 'Group', { body }); };
@@ -345,8 +356,7 @@ const openGroup = (group, container = app) => {
         <div class="chathead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           <div class="gavatars">${avs || '👥'}</div>
-          <div class="who"><b class="gname">${esc(group.name || 'Group')}</b><div class="sub gonline">…</div></div>
-          ${group.created_by === state.me.id ? `<button class="icon grename" aria-label="Rename group">${icon('pencil')}</button>` : ''}
+          <div class="who"><button type="button" class="group-title grename" aria-label="Rename group">${esc(group.name || 'Group')}</button><div class="sub gonline">…</div></div>
           <button class="icon gadd" aria-label="Add friend to group">${icon('userPlus')}</button>
           <button class="icon gcall" aria-label="Start a group call">${icon('phone')}</button>
         </div>
@@ -394,17 +404,9 @@ const openGroup = (group, container = app) => {
     $('.gmute', gp.node).onclick = () => { const a = gp.call?.localStream.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setGCtl(gp, '.gmute', a.enabled, 'mic', 'micOff'); } };
     $('.gcam', gp.node).onclick = () => { const v = gp.call?.localStream.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setGCtl(gp, '.gcam', v.enabled, 'video', 'videoOff'); } };
     $('.ghang', gp.node).onclick = () => leaveCall(gp);
-    const rename = $('.grename', gp.node);
-    if (rename) rename.onclick = async () => {
-        const next = window.prompt('Group name', gp.name || 'Group');
-        if (next === null) return;
-        const name = next.trim().slice(0, 60);
-        if (!name) return void toast('Group name cannot be empty.');
-        if (name === gp.name) return;
-        rename.disabled = true;
-        const { error } = await db.renameGroup(gp.id, name);
-        rename.disabled = false;
-        if (error) return void toast('Could not rename the group.');
+    $('.grename', gp.node).onclick = async () => {
+        const name = await promptGroupName(gp.group);
+        if (!name) return;
         setGroupName(gp, name);
         bcast(gp, { t: 'gname', groupName: name });
         gSys(gp, `You renamed the group to ${name}`);
@@ -515,6 +517,13 @@ export const renderGroupList = async (into, activeId = null) => {
     if (!data || !data.length) { into.innerHTML = `<div class="muted tiny" style="padding:4px 12px 8px">No groups yet — tap ＋ to start one.</div>`; return; }
     data.forEach(g => {
         const members = (g.mf_group_members || []).map(m => m.profiles?.username).filter(Boolean);
-        into.appendChild(el(`<button class="conv ${g.id === activeId ? 'active' : ''}" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b>${esc(g.name || 'Group')}</b><div class="sub">${esc(members.slice(0, 4).join(', ')) || (members.length + ' members')}</div></div></button>`));
+        const row = el(`<button class="conv ${g.id === activeId ? 'active' : ''}" data-go="#/group/${g.id}"><div class="avatar">👥</div><div class="who"><b class="group-list-name" title="Rename group">${esc(g.name || 'Group')}</b><div class="sub">${esc(members.slice(0, 4).join(', ')) || (members.length + ' members')}</div></div></button>`);
+        $('.group-list-name', row).onclick = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const name = await promptGroupName(g);
+            if (name) $('.group-list-name', row).textContent = name;
+        };
+        into.appendChild(row);
     });
 };

@@ -162,6 +162,9 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .chatview{display:flex;flex-direction:column;height:calc(var(--app-vh, 100dvh) - 56px - var(--tab-h));min-height:0;padding:0}
 .chathead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
 .chathead .back{font-size:26px}
+.group-title{margin:0;padding:0;border:0;background:none;color:var(--text);font:inherit;font-weight:700;cursor:pointer;text-align:left}
+.group-title:hover,.group-list-name:hover{color:var(--accent2);text-decoration:underline;text-underline-offset:3px}
+.group-list-name{cursor:pointer}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
 .icon{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center}
 .ic{display:block;flex:none}

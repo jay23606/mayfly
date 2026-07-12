@@ -226,9 +226,23 @@ drop policy if exists "mf_groups_select" on public.mf_groups;
 create policy "mf_groups_select" on public.mf_groups for select using (public.mf_is_group_member(id, auth.uid()) or auth.uid() = created_by);
 drop policy if exists "mf_groups_insert" on public.mf_groups;
 create policy "mf_groups_insert" on public.mf_groups for insert with check (auth.uid() = created_by);
+-- Members may rename a group through this narrow RPC. They cannot use it to
+-- change membership, ownership, or any other group field.
+create or replace function public.mf_rename_group(gid uuid, new_name text)
+returns text language plpgsql security definer set search_path = public as $$
+declare clean_name text := left(trim(coalesce(new_name, '')), 60);
+begin
+  if auth.uid() is null or not public.mf_is_group_member(gid, auth.uid()) then
+    raise exception 'Only group members can rename a group';
+  end if;
+  if clean_name = '' then raise exception 'Group name cannot be empty'; end if;
+  update public.mf_groups set name = clean_name where id = gid;
+  return clean_name;
+end;
+$$;
+revoke all on function public.mf_rename_group(uuid, text) from public;
+grant execute on function public.mf_rename_group(uuid, text) to authenticated;
 drop policy if exists "mf_groups_update" on public.mf_groups;
-create policy "mf_groups_update" on public.mf_groups for update
-  using (auth.uid() = created_by) with check (auth.uid() = created_by);
 drop policy if exists "mf_groups_delete" on public.mf_groups;
 create policy "mf_groups_delete" on public.mf_groups for delete using (auth.uid() = created_by);
 drop policy if exists "mf_gm_select" on public.mf_group_members;

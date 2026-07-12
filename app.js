@@ -5,8 +5,8 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat } from './chat.js';
-import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat, clearAllLocalConversations } from './chat.js';
+import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
@@ -577,12 +577,20 @@ const viewChats = (activeUid, activeGroupId = null) => {
         <div id="storiesbar" class="storiesbar"></div>
         <div class="grouphead">Groups <button class="pill primary" id="newgroup" aria-label="New group">＋</button></div>
         <div id="grouplist"></div>
-        <div class="convhead">Chats</div>
+        <div class="convhead">Chats <button class="icon allchatmore" aria-label="All chat options">${icon('more')}</button><div class="headmenu" hidden><button type="button" class="clearallchats">Clear all conversations on this device</button></div></div>
         <div id="convs"><div class="spin">Loading…</div></div>
       </aside>
       <section class="threadpane" id="threadpane">${open ? '<div class="spin">…</div>' : '<div class="threadempty">Pick a conversation, or tap ◉ on someone to snap them.</div>'}</section>
     </main>`;
     $('#newgroup').onclick = () => createGroupFlow();
+    const allMenu = $('.convhead .headmenu'), allMore = $('.allchatmore');
+    allMore.onclick = () => { allMenu.hidden = !allMenu.hidden; allMore.setAttribute('aria-expanded', String(!allMenu.hidden)); };
+    $('.clearallchats').onclick = async () => {
+        if (!confirm('Clear all local conversations and opened media from this device? Active delivery data and your account will stay intact.')) return;
+        allMenu.hidden = true;
+        await clearAllLocalConversations(); clearAllGroupConversations();
+        location.hash = '#/chats'; toast('Local conversations cleared.');
+    };
     renderStoriesBar($('#storiesbar'));
     renderGroupList($('#grouplist'), activeGroupId);
     renderConvs($('#convs'), activeUid);

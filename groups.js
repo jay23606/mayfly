@@ -11,6 +11,21 @@ import { db } from './db.js';
 let current = null;   // the open group panel, or null
 const backgrounds = new Map(); // groups subscribed while their window is not open
 
+const clearGroupState = (gp) => {
+    if (!gp) return;
+    gp.pending = [];
+    const log = gp.node && $('.chatlog', gp.node);
+    if (log) {
+        $$('audio, video, img', log).forEach(media => { if (media.src?.startsWith('blob:')) URL.revokeObjectURL(media.src); });
+        log.innerHTML = '';
+    }
+};
+export const clearGroupConversation = (id) => clearGroupState(current?.id === id ? current : backgrounds.get(id));
+export const clearAllGroupConversations = () => {
+    clearGroupState(current);
+    backgrounds.forEach(clearGroupState);
+};
+
 const memberMap = (group) => { const m = {}; (group.mf_group_members || []).forEach(gm => { m[gm.user_id] = gm.profiles || {}; }); return m; };
 const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; const line = el(html); l.appendChild(line); l.scrollTop = l.scrollHeight; return line; };
 const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
@@ -361,6 +376,8 @@ const openGroup = (group, container = app) => {
           <div class="who"><button type="button" class="group-title grename" aria-label="Rename group">${esc(group.name || 'Group')}</button><div class="sub gonline">…</div></div>
           <button class="icon gadd" aria-label="Add friend to group">${icon('userPlus')}</button>
           <button class="icon gcall" aria-label="Start a group call">${icon('phone')}</button>
+          <button class="icon gmore" aria-label="Group chat options">${icon('more')}</button>
+          <div class="headmenu" hidden><button type="button" class="cleargroup">Clear chat on this device</button></div>
         </div>
         <div class="gvideos"></div>
         <div class="gcallbar">
@@ -412,6 +429,12 @@ const openGroup = (group, container = app) => {
     ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
 
     $('.gcall', gp.node).onclick = (e) => gp.call ? leaveCall(gp) : callMenu(e.currentTarget, (video) => joinCall(gp, video));
+    const menu = $('.headmenu', gp.node), more = $('.gmore', gp.node);
+    more.onclick = () => { menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden)); };
+    $('.cleargroup', gp.node).onclick = () => {
+        if (!confirm(`Clear the visible ${gp.name || 'group'} chat on this device?`)) return;
+        menu.hidden = true; clearGroupConversation(gp.id); toast('Group chat cleared on this device.');
+    };
     $('.gmute', gp.node).onclick = () => { const a = gp.call?.localStream.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setGCtl(gp, '.gmute', a.enabled, 'mic', 'micOff'); } };
     $('.gcam', gp.node).onclick = () => { const v = gp.call?.localStream.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setGCtl(gp, '.gcam', v.enabled, 'video', 'videoOff'); } };
     $('.ghang', gp.node).onclick = () => leaveCall(gp);

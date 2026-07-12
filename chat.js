@@ -31,11 +31,16 @@ const snapKind = (s) => snapMime(s).startsWith('video/') ? 'video' : 'photo';
 const receiptKey = (id) => 'snap-receipt:' + id;
 const statusRank = { sent: 0, delivered: 1, expired: 2, opened: 3 };
 const pendingSnapStatuses = new Map();
+const THREAD_CLEAR_KEY = 'mf_thread_clear_marks';
+const clearMarks = () => { try { return JSON.parse(localStorage.getItem(THREAD_CLEAR_KEY) || '{}'); } catch (e) { return {}; } };
+const clearAt = (uid) => { const marks = clearMarks(); return Math.max(Number(marks['*']) || 0, Number(marks[uid]) || 0); };
+const markCleared = (uid) => { const marks = clearMarks(); marks[uid] = Date.now(); localStorage.setItem(THREAD_CLEAR_KEY, JSON.stringify(marks)); };
+const isAfterClear = (uid, at) => Number(at) > clearAt(uid);
 
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
 export const chatUnread = () => {
     const s = new Set(unreadMsg);
-    for (const uid in inboxByUser) if (inboxByUser[uid]?.length) s.add(uid);
+    for (const uid in inboxByUser) if (inboxByUser[uid]?.some(snap => isAfterClear(uid, new Date(snap.created_at).getTime()))) s.add(uid);
     return s.size;
 };
 
@@ -155,6 +160,32 @@ const refreshInbox = async () => {
     Promise.all((data || []).filter(s => !s.delivered_at).map(s => db.markSnapDelivered(s.id))).catch(() => {});
 };
 
+const clearReceiptsFor = async (uid = null) => {
+    const keys = await idb.keys();
+    await Promise.all(keys.filter(key => typeof key === 'string' && key.startsWith('snap-receipt:')).map(async key => {
+        const receipt = await idb.get(key);
+        if (!uid || receipt?.uid === uid) await idb.del(key);
+    }));
+};
+export const clearConversation = async (uid) => {
+    markCleared(uid); unreadMsg.delete(uid);
+    await histUpdate(uid, history => { history.splice(0, history.length); }).catch(() => {});
+    await idb.del('thread:' + uid).catch(() => {});
+    await clearReceiptsFor(uid).catch(() => {});
+    if (openUid === uid) await renderThreadBody(uid);
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
+export const clearAllLocalConversations = async () => {
+    const marks = clearMarks(); marks['*'] = Date.now(); localStorage.setItem(THREAD_CLEAR_KEY, JSON.stringify(marks));
+    unreadMsg.clear();
+    const keys = await idb.keys();
+    await Promise.all(keys.filter(key => typeof key === 'string' && (key.startsWith('thread:') || key.startsWith('snap-receipt:'))).map(key => idb.del(key)));
+    if (openUid) await renderThreadBody(openUid);
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
+
 // ===================== conversation list =====================
 export const renderConvs = async (box, activeUid) => {
     convBox = box;
@@ -162,16 +193,17 @@ export const renderConvs = async (box, activeUid) => {
     const friends = (fr || []).map(f => f.requester_id === state.me.id ? f.addressee : f.requester).filter(Boolean);
     if (box !== convBox) return;
     // build each conversation's summary
-    const rows = await Promise.all(friends.map(async (u) => {
+    const rows = (await Promise.all(friends.map(async (u) => {
         const h = await histGet(u.id);
-        const pending = inboxByUser[u.id] || [];
+        const pending = (inboxByUser[u.id] || []).filter(snap => isAfterClear(u.id, new Date(snap.created_at).getTime()));
         const snaps = pending.length;
         const kind = snaps ? snapKind(pending[0]) : null;
         const lastAt = h.length ? h[h.length - 1].at : 0;
+        if (u.id !== activeUid && clearAt(u.id) && !isAfterClear(u.id, lastAt) && !snaps) return null;
         const unread = snaps > 0 || unreadMsg.has(u.id);
         const status = snaps ? `New ${kind === 'video' ? 'Video' : 'Photo'} Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
         return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps, kind };
-    }));
+    }))).filter(Boolean);
     rows.sort((a, b) => (b.unread - a.unread) || (b.lastAt - a.lastAt));
     box.innerHTML = '';
     if (!rows.length) { box.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`; return; }
@@ -200,6 +232,8 @@ export const openConversation = async (box, uid) => {
           ${avatarHTML(username, prof?.avatar)}
           <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${isOnline(uid) ? 'active now' : 'offline'}</div></div>
           <button class="icon callbtn" aria-label="Call">${icon('phone')}</button>
+          <button class="icon chatmore" aria-label="Chat options">${icon('more')}</button>
+          <div class="headmenu" hidden><button type="button" class="clearthread">Clear chat on this device</button></div>
         </div>
         <div class="tbody" id="tbody"><div class="spin">…</div></div>
         <div class="ctyping" id="ctyping"></div>
@@ -213,6 +247,12 @@ export const openConversation = async (box, uid) => {
         </form>
       </div>`;
     $('.callbtn', box).onclick = (e) => callMenu(e.currentTarget, (video) => callUser(uid, username, video));
+    const menu = $('.headmenu', box), more = $('.chatmore', box);
+    more.onclick = () => { menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden)); };
+    $('.clearthread', box).onclick = async () => {
+        if (!confirm(`Clear this chat with ${username} on this device?`)) return;
+        menu.hidden = true; await clearConversation(uid); toast('Chat cleared on this device.');
+    };
     $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
     const fileInput = $('.fileinput', box);
     // Files are live-only (no relay) — don't open the picker if it can't be sent.
@@ -247,7 +287,7 @@ const renderThreadBody = async (uid) => {
             if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') e.status = 'expired';
         });
     }).catch(() => {});
-    const snaps = (inboxByUser[uid] || []).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
+    const snaps = (inboxByUser[uid] || []).filter(s => isAfterClear(uid, new Date(s.created_at).getTime())).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
     body.innerHTML = '';
     if (!items.length) body.innerHTML = `<div class="threadhint">Say hi 👋 — messages are end-to-end encrypted.</div>`;

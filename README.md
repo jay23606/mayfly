@@ -1,20 +1,23 @@
 # mayfly 🐛
 
-Ephemeral photo messaging — like Snapchat, but a single-page PWA on **GitHub Pages + Supabase**, with **no build step** and (almost) **no server-side media**. A snap lives for a day, then vanishes; it's destroyed the moment it's opened.
+Privacy-first disappearing media — a single-page PWA on **GitHub Pages + Supabase**, with **no build step**. Mayfly combines full-quality live peer-to-peer Snaps with bounded, end-to-end encrypted offline photo relays, 24-hour Stories, encrypted chat, voice notes, groups, and video calls.
 
 Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses the same engine (Supabase auth/realtime, raw WebRTC over Realtime Broadcast, canvas image processing, IndexedDB). Where instamegle is a *persistent public feed*, mayfly is *directed and ephemeral*.
+
+Read the architecture comparison: [**Snaps Without a Server — mayfly vs. Snapchat**](https://jay23606.github.io/mayfly/paper.html).
 
 ## How a snap travels
 
 | Recipient is… | Delivery | Where the full image lives |
 |---|---|---|
-| **online** | live peer-to-peer (WebRTC) | only in the sender's browser until it's pulled; never on the server |
-| **offline** | encrypted relay | end-to-end encrypted ciphertext in a private Storage bucket, deleted on open |
+| **online** | live peer-to-peer (WebRTC) | full-quality photo or video streams directly from the sender's browser |
+| **offline** | encrypted photo relay | a re-encoded ≤50 KB WebP/JPEG ciphertext in a private Storage bucket; video remains live-only |
 
 - **End-to-end encryption** (`crypto.js`): every relayed snap is encrypted to the recipient's ECDH P-256 public key (ECIES → AES-GCM). The private key is generated on-device and never leaves it, so the server only ever holds random bytes.
-- **The server never holds a viewable photo.** The only image data in Postgres is a ~24px blurred LQIP preview so the inbox can show *something* before you open a snap.
-- **Offline cap:** while a friend is offline you can have at most **one** unopened snap waiting for them (bounds relay storage).
-- **Chat-first Snaps:** Snaps stay in the recipient's local chat history by default. Choosing a 3/5/10-second timer makes one view full-screen, then hard-deletes the row (and relay blob).
+- **The server never holds a viewable full Snap.** Postgres holds only small previews and metadata; relay media is encrypted to the recipient's device key before it reaches Storage.
+- **Bounded offline delivery:** one pending relay per friend, at most **100** outstanding relay Snaps per sender, each capped at 50 KB and cleaned after seven days. Video Snaps require the recipient to be online.
+- **Chat-first Snaps:** Snaps stay in the recipient's local chat history by default. Choosing a 3/5/10-second timer makes one view full-screen, then removes the delivery.
+- **Receipts:** a sent Snap progresses through **Sent → Delivered → Opened**, or **Expired** after its delivery window.
 - **Streaks** 🔥 count consecutive days you and a friend snap each other.
 
 ## Files
@@ -31,10 +34,10 @@ Runs entirely client-side — the publishable key in `core.js` is public-safe be
 
 ## Also built
 
-- **Stories** — 24h posts visible to friends, replayable, with a viewer list (full image P2P, LQIP fallback).
-- **Chat** — ephemeral P2P DMs: text, **voice notes**, and photo/video/file attachments (nothing on the server).
-- **Video calls** — 1:1 P2P video/voice (WebRTC), plus **group mesh calls**.
-- **Group chats** — persistent membership (`mf_groups`), ephemeral Realtime Broadcast text on member-only `mfgroup:` channels, full P2P mesh video.
+- **Stories** — 24-hour posts visible to friends, with replies, viewers, deletion controls, a full-image P2P path, and a capped 20 KB offline fallback. Each account keeps its five newest Stories.
+- **Chat** — end-to-end encrypted text delivery (up to ten undelivered messages per offline recipient, with a seven-day TTL), plus live P2P voice notes and photo/video/file attachments.
+- **Video calls** — 1:1 P2P video/voice (WebRTC), plus group mesh calls.
+- **Group chats** — persistent membership, member-controlled naming/removal/leaving, live text, Snaps, files, voice clips, and P2P mesh calls.
 
 ## Roadmap
 

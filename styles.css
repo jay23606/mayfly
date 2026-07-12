@@ -151,8 +151,11 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .segs i{display:block;height:100%;width:0;background:#fff}
 .tapzones{position:absolute;inset:0;display:flex;z-index:2}
 .tz{flex:1}.tz.right{flex:2}
-.storyclose,.storyprev,.storynext{position:absolute;z-index:5;width:34px;height:34px;border:0;border-radius:50%;background:#0008;color:#fff;font-size:28px;line-height:30px;cursor:pointer}
+.storyclose,.storymore,.storyprev,.storynext{position:absolute;z-index:5;width:34px;height:34px;border:0;border-radius:50%;background:#0008;color:#fff;font-size:28px;line-height:30px;cursor:pointer}
 .storyclose{top:calc(4px + env(safe-area-inset-top));right:10px}
+.storymore{top:calc(4px + env(safe-area-inset-top));right:50px;font-size:24px}
+.storymenu{position:absolute;z-index:6;top:calc(44px + env(safe-area-inset-top));right:50px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 8px 24px #0008}
+.storymenu button{border:0;background:none;color:#ff7890;font:inherit;font-weight:700;padding:10px 14px;cursor:pointer;white-space:nowrap}
 .storyprev{top:50%;left:10px;transform:translateY(-50%);font-size:34px}
 .storynext{top:50%;right:10px;transform:translateY(-50%);font-size:34px}
 .viewers{position:absolute;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));color:#fff;font-size:13px;z-index:4;text-shadow:0 1px 6px #000}

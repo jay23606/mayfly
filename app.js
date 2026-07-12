@@ -387,17 +387,19 @@ const renderStoriesBar = async (into) => {
 // Full-screen story player. It advances through each person's stories, then the next person.
 const playStories = (groups, startGroup = 0) => {
     if (!groups.length) return;
-    let i = 0, groupIndex = startGroup, timerId = null, items, mine;
+    let i = 0, groupIndex = startGroup, timerId = null, items, mine, closed = false;
     const ov = el(`<div class="player stories"><div class="segs"></div>
         <img alt="story"><div class="pcap"></div><div class="pname"></div>
         <div class="tapzones"><div class="tz left"></div><div class="tz right"></div></div>
+        <button class="storymore" aria-label="Story options" title="Story options" hidden>⋮</button>
+        <div class="storymenu" hidden><button class="storydelete" type="button">Delete story</button></div>
         <button class="storyclose" aria-label="Close stories" title="Close">×</button>
         <button class="storyprev" aria-label="Previous story" title="Previous story">‹</button>
         <button class="storynext" aria-label="Next story" title="Next story">›</button>
         <div class="viewers"></div></div>`);
     document.body.appendChild(ov);
-    const img = $('img', ov), segs = $('.segs', ov);
-    const close = () => { clearTimeout(timerId); document.removeEventListener('keydown', onKeydown); ov.remove(); };
+    const img = $('img', ov), segs = $('.segs', ov), more = $('.storymore', ov), menu = $('.storymenu', ov);
+    const close = () => { closed = true; clearTimeout(timerId); document.removeEventListener('keydown', onKeydown); ov.remove(); };
     const setGroup = (nextGroup, atEnd = false) => {
         groupIndex = nextGroup;
         ({ items, mine } = groups[groupIndex]);
@@ -409,6 +411,8 @@ const playStories = (groups, startGroup = 0) => {
         if (k < 0) return groupIndex > 0 ? setGroup(groupIndex - 1, true) : show(0);
         if (k >= items.length) return groupIndex < groups.length - 1 ? setGroup(groupIndex + 1) : close();
         i = k;
+        more.hidden = !mine;
+        menu.hidden = true;
         segs.querySelectorAll('i').forEach((s, j) => { s.style.transition = 'none'; s.style.width = j < k ? '100%' : '0'; });
         const s = items[k];
         $('.pname', ov).textContent = (s.author?.username) || (mine ? 'You' : '');
@@ -420,7 +424,7 @@ const playStories = (groups, startGroup = 0) => {
         // pull the full image P2P (from our own IndexedDB if it's ours)
         const shownGroup = groupIndex;
         let full = mine ? await idb.get('story:' + s.id) : await fetchSnap(s.id, s.user_id);
-        if (shownGroup !== groupIndex || i !== k) return;
+        if (closed || shownGroup !== groupIndex || i !== k) return;
         if (full) { img.src = safeMediaUrl(full); img.style.filter = 'none'; }
         if (mine) showViewers(s.id);
         // advance the current segment bar, then move on
@@ -440,6 +444,17 @@ const playStories = (groups, startGroup = 0) => {
     $('.tz.right', ov).onclick = () => show(i + 1);
     $('.tz.left', ov).onclick = () => show(i - 1);
     $('.storyclose', ov).onclick = close;
+    more.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+    $('.storydelete', ov).onclick = async (e) => {
+        e.stopPropagation();
+        const s = items[i];
+        if (!mine || !s || !confirm('Delete this Story?')) return;
+        const { error } = await db.delStory(s.id);
+        if (error) return void toast('Could not delete that Story.');
+        await idb.del('story:' + s.id);
+        close();
+        if ($('#storiesbar')) renderStoriesBar($('#storiesbar'));
+    };
     $('.storyprev', ov).onclick = () => show(i - 1);
     $('.storynext', ov).onclick = () => show(i + 1);
     $('.viewers', ov).onclick = (e) => e.stopPropagation();

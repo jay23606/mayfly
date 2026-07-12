@@ -90,9 +90,12 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
     try {
         const p = JSON.parse(text);
         if (p?.t !== 'story-reply' || typeof p.storyId !== 'string' || typeof p.text !== 'string') return null;
-        let preview = localPreview;
-        if (!preview) { const { data } = await db.storyById(p.storyId); preview = data?.preview || null; }
-        return { me, kind: 'story-reply', text: p.text, storyId: p.storyId, preview, at };
+        let preview = localPreview, storyW = Number(p.w) || 0, storyH = Number(p.h) || 0;
+        if (!preview || !storyW || !storyH) {
+            const { data } = await db.storyById(p.storyId);
+            preview ||= data?.preview || null; storyW ||= Number(data?.w) || 0; storyH ||= Number(data?.h) || 0;
+        }
+        return { me, kind: 'story-reply', text: p.text, storyId: p.storyId, preview, storyW, storyH, at };
     } catch (e) { return null; }
 };
 const ingestMessage = async (row) => {
@@ -269,8 +272,9 @@ const snapCard = (s) => {
 };
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
 const storyReplyBubble = (e) => {
-    const preview = e.preview ? `<img src="${safeMediaUrl(e.preview)}" alt="Story preview">` : '';
-    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
+    const w = Math.max(1, Math.min(4096, Number(e.storyW) || 4)), h = Math.max(1, Math.min(4096, Number(e.storyH) || 3));
+    const preview = e.preview ? `<div class="storyreplypreview" style="aspect-ratio:${w} / ${h}"><img src="${safeMediaUrl(e.preview)}" alt="Story preview"></div>` : '';
+    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div><div class="storyreplytext">${esc(e.text || 'Story reply')}</div>${preview}</div>`);
 };
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
@@ -303,8 +307,9 @@ const sendText = async (uid, username, text, localEntry = null) => {
     return true;
 };
 export const sendStoryReply = async (uid, username, text, story) => {
-    const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text });
-    return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, at: Date.now() });
+    const storyW = Number(story.w) || 0, storyH = Number(story.h) || 0;
+    const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text, w: storyW, h: storyH });
+    return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, storyW, storyH, at: Date.now() });
 };
 
 // ===================== snap opening =====================

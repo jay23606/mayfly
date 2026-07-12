@@ -12,6 +12,8 @@ import { encryptText, decryptText, decryptWith } from './crypto.js';
 // Each device keeps its own thread history in IndexedDB (thread:<uid>); nothing readable
 // lives on the server.
 
+const MSG_MAX = 2000;             // max characters per chat message
+const MSG_PENDING_CAP = 10;       // max undelivered messages queued to one offline recipient
 const conns = new Map();          // uid -> live P2P data conn (for media/voice/typing)
 const pubCache = new Map();       // uid -> recipient public-key JWK
 let inboxByUser = {};             // uid -> [unopened snap rows]
@@ -174,7 +176,7 @@ export const openConversation = async (box, uid) => {
         <div class="voicepreview" hidden></div>
         <form class="tin">
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
-          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" aria-label="Message">
+          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
           <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
           <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
           <input type="file" class="fileinput" hidden>
@@ -238,6 +240,16 @@ const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; b
 
 // ---- send an async encrypted text ----
 const sendText = async (uid, username, text) => {
+    text = text.slice(0, MSG_MAX);   // hard size cap (backstop to the input maxlength)
+    // Cap how many undelivered messages can queue up for a friend who's offline.
+    if (!isOnline(uid)) {
+        const { count } = await db.pendingMessagesTo(uid);
+        if (count && count >= MSG_PENDING_CAP) {
+            const msg = `(too many undelivered messages — wait until ${username} opens mayfly)`;
+            if (openUid === uid) appendBubble(msg, 'sys'); else toast('Too many undelivered messages.');
+            return false;
+        }
+    }
     await histPush(uid, { me: true, kind: 'text', text, at: Date.now() });
     if (openUid === uid) appendBubble(text, 'me');
     if (convBox) renderConvs(convBox, uid);

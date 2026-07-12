@@ -66,6 +66,10 @@ const db = {
     // everything sent to me in the last week that I haven't picked up yet (across all friends)
     myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id)
         .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()).order('created_at'),
+    // count of my still-undelivered (unexpired) messages to one recipient — the per-recipient offline cap
+    pendingMessagesTo: (recipient_id) => sb.from('mf_messages').select('id', { count: 'exact', head: true })
+        .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
+        .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()),
     delMessage: (id) => sb.from('mf_messages').delete().eq('id', id),
     // undelivered messages I'm party to that are older than a week — GC'd on boot (RLS scopes to me)
     delExpiredMessages: () => sb.from('mf_messages').delete()

@@ -32,10 +32,14 @@ const receiptKey = (id) => 'snap-receipt:' + id;
 const statusRank = { sent: 0, delivered: 1, expired: 2, opened: 3 };
 const pendingSnapStatuses = new Map();
 const THREAD_CLEAR_KEY = 'mf_thread_clear_marks';
+const THREAD_HIDE_KEY = 'mf_thread_hide_marks';
 const clearMarks = () => { try { return JSON.parse(localStorage.getItem(THREAD_CLEAR_KEY) || '{}'); } catch (e) { return {}; } };
+const hideMarks = () => { try { return JSON.parse(localStorage.getItem(THREAD_HIDE_KEY) || '{}'); } catch (e) { return {}; } };
 const clearAt = (uid) => { const marks = clearMarks(); return Math.max(Number(marks['*']) || 0, Number(marks[uid]) || 0); };
 const clearAllAt = () => Number(clearMarks()['*']) || 0;
 const markCleared = (uid) => { const marks = clearMarks(); marks[uid] = Date.now(); localStorage.setItem(THREAD_CLEAR_KEY, JSON.stringify(marks)); };
+const hideAt = (uid) => Number(hideMarks()[uid]) || 0;
+const markHidden = (uid) => { const marks = hideMarks(); marks[uid] = Date.now(); localStorage.setItem(THREAD_HIDE_KEY, JSON.stringify(marks)); };
 const isAfterClear = (uid, at) => Number(at) > clearAt(uid);
 
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
@@ -186,6 +190,11 @@ export const clearAllLocalConversations = async () => {
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };
+export const hideConversation = (uid) => {
+    markHidden(uid); unreadMsg.delete(uid);
+    if (convBox) renderConvs(convBox, openUid);
+    onChange();
+};
 
 // ===================== conversation list =====================
 export const renderConvs = async (box, activeUid) => {
@@ -201,6 +210,7 @@ export const renderConvs = async (box, activeUid) => {
         const kind = snaps ? snapKind(pending[0]) : null;
         const lastAt = h.length ? h[h.length - 1].at : 0;
         if (u.id !== activeUid && clearAllAt() && lastAt <= clearAllAt() && !snaps) return null;
+        if (hideAt(u.id) && lastAt <= hideAt(u.id) && !pending.some(snap => new Date(snap.created_at).getTime() > hideAt(u.id))) return null;
         const unread = snaps > 0 || unreadMsg.has(u.id);
         const status = snaps ? `New ${kind === 'video' ? 'Video' : 'Photo'} Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
         return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps, kind };
@@ -210,11 +220,16 @@ export const renderConvs = async (box, activeUid) => {
     if (!rows.length) { box.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`; return; }
     rows.forEach(({ u, unread, status, snaps, kind }) => {
         const row = el(`<button class="conv ${u.id === activeUid ? 'active' : ''} ${unread ? 'unread' : ''} ${kind ? 'snap-' + kind : ''}" data-go="#/c/${u.id}">
+            <span class="convhide" role="button" tabindex="0" aria-label="Hide conversation with ${esc(u.username)}" title="Hide conversation">×</span>
             ${avatarHTML(u.username, u.avatar)}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
             <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">${icon('camera', 20)}</span></button>`);
         $('.camicon', row).onclick = (e) => { e.preventDefault(); e.stopPropagation(); location.hash = '#/snap/' + u.id; };
+        const hide = $('.convhide', row);
+        const doHide = (e) => { e.preventDefault(); e.stopPropagation(); hideConversation(u.id); if (openUid === u.id) location.hash = '#/chats'; };
+        hide.onclick = doHide;
+        hide.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') doHide(e); };
         box.appendChild(row);
     });
 };

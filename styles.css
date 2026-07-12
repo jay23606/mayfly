@@ -290,6 +290,8 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .headmenu button:hover{background:#ff3b5c16}
 .grouphead .pill{padding:5px 12px;font-size:14px}
 .conv{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:11px 12px;color:var(--text);cursor:pointer}
+.convhide{display:grid;place-items:center;width:18px;height:18px;flex:none;border-radius:50%;color:var(--muted);font-size:20px;line-height:1;cursor:pointer}
+.convhide:hover,.convhide:focus-visible{background:var(--panel2);color:#ff7890;outline:none}
 .conv.active{background:var(--panel)}
 .conv .who{flex:1;min-width:0}
 .conv .who b{font-weight:600}

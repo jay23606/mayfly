@@ -294,13 +294,35 @@ const MAX_FILE = 20 * 1024 * 1024;
 const blobToDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
 const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += 16384, i++) { try { dc.send(buf.slice(o, o + 16384)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
+const openMediaViewer = (m) => {
+    const video = m.mediaKind === 'video';
+    const tag = video ? `<video src="${safeMediaUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
+    const ov = el(`<div class="media-viewer" role="dialog" aria-modal="true"><button class="media-close" aria-label="Close media">✕</button>${tag}</div>`);
+    const close = () => { ov.remove(); window.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    $('.media-close', ov).onclick = close;
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    document.body.appendChild(ov);
+    window.addEventListener('keydown', onKey);
+    if (video) {
+        const player = $('video', ov);
+        player.play().catch(() => {});
+    }
+};
 const mediaBubble = (m, cls) => {
     const url = safeMediaUrl(m.data);
     const inner = m.mediaKind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
         : m.mediaKind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
         : m.mediaKind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(m.name || 'file')}">📎 ${esc(m.name || 'file')}</a>`;
-    return el(`<div class="b ${cls} media">${inner}${m.caption ? `<div class="snapcaption">${esc(m.caption)}</div>` : ''}</div>`);
+    const bubble = el(`<div class="b ${cls} media">${inner}${m.caption ? `<div class="snapcaption">${esc(m.caption)}</div>` : ''}</div>`);
+    const media = $('.chatmedia', bubble);
+    if (media) {
+        media.classList.add('expandable');
+        media.title = 'Open larger';
+        media.onclick = () => openMediaViewer(m);
+    }
+    return bubble;
 };
 const sendFile = async (uid, file, kind) => {
     const c = conns.get(uid);

@@ -193,9 +193,13 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 /* ---------- chat media ---------- */
 .b.media{padding:4px;background:none!important}
 .chatmedia{max-width:220px;max-height:280px;border-radius:14px;display:block}
+.chatmedia.expandable{cursor:zoom-in}
 .snapcaption{max-width:220px;padding:7px 9px 3px;font-size:13px;line-height:1.3;color:var(--text)}
 .chatfile{display:inline-block;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:14px}
 .b audio{height:38px}
+.media-viewer{position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;padding:18px;background:#000e;animation:pop .18s ease}
+.media-viewer img,.media-viewer video{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+.media-close{position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;z-index:1;width:42px;height:42px;border:0;border-radius:50%;background:#000b;color:#fff;font-size:24px;cursor:pointer}
 .tin .mic.recording{color:#ff3b5c;animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.4}}
 

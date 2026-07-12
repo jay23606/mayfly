@@ -12,7 +12,7 @@ let current = null;   // the open group panel, or null
 const backgrounds = new Map(); // groups subscribed while their window is not open
 
 const memberMap = (group) => { const m = {}; (group.mf_group_members || []).forEach(gm => { m[gm.user_id] = gm.profiles || {}; }); return m; };
-const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; l.appendChild(el(html)); l.scrollTop = l.scrollHeight; };
+const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; const line = el(html); l.appendChild(line); l.scrollTop = l.scrollHeight; return line; };
 const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
 const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
@@ -33,13 +33,31 @@ const sendGroupBytes = async (conn, bytes) => {
     }
     return true;
 };
+const openGroupMediaViewer = (media) => {
+    const video = media.kind === 'video';
+    const tag = video ? `<video src="${safeMediaUrl(media.url)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="${esc(media.name || 'image')}">`;
+    const ov = el(`<div class="media-viewer" role="dialog" aria-modal="true"><button class="media-close" aria-label="Close media">✕</button>${tag}</div>`);
+    const close = () => { ov.remove(); window.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    $('.media-close', ov).onclick = close;
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    document.body.appendChild(ov);
+    window.addEventListener('keydown', onKey);
+    if (video) $('video', ov).play().catch(() => {});
+};
 const groupMediaBubble = (gp, media, cls, name = '') => {
     const url = safeMediaUrl(media.url);
     const inner = media.kind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
         : media.kind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
         : media.kind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(media.name || 'file')}">📎 ${esc(media.name || 'file')}</a>`;
-    gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}${media.caption ? `<div class="snapcaption">${esc(media.caption)}</div>` : ''}</div>`);
+    const bubble = gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}${media.caption ? `<div class="snapcaption">${esc(media.caption)}</div>` : ''}</div>`);
+    const mediaEl = bubble && $('.chatmedia', bubble);
+    if (mediaEl) {
+        mediaEl.classList.add('expandable');
+        mediaEl.title = 'Open larger';
+        mediaEl.onclick = () => openGroupMediaViewer(media);
+    }
 };
 const groupSnapCard = (gp, media, cls, name = '') => {
     const l = $('.chatlog', gp.node); if (!l) return;

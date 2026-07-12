@@ -158,7 +158,7 @@ create policy "mf_stories_select" on public.mf_stories for select
   using (auth.uid() = user_id or public.mf_is_friend(user_id));
 drop policy if exists "mf_stories_insert" on public.mf_stories;
 -- Story creation goes through mf_add_story so previews stay bounded and every
--- account retains only its 10 newest Stories.
+-- account retains only its 5 newest Stories.
 create policy "mf_stories_insert" on public.mf_stories for insert with check (false);
 create or replace function public.mf_add_story(
   story_id uuid, story_preview text, story_caption text, story_w int, story_h int
@@ -167,8 +167,8 @@ returns public.mf_stories language plpgsql security definer set search_path = pu
 declare created public.mf_stories;
 begin
   if auth.uid() is null then raise exception 'Sign in to post a Story'; end if;
-  if story_preview is null or octet_length(story_preview) > 32768 then
-    raise exception 'Story preview must be at most 32 KB';
+  if story_preview is null or octet_length(story_preview) > 20480 then
+    raise exception 'Story preview must be at most 20 KB';
   end if;
   insert into public.mf_stories (id, user_id, preview, caption, w, h, expires_at)
   values (story_id, auth.uid(), story_preview, left(coalesce(story_caption, ''), 120), story_w, story_h,
@@ -177,7 +177,7 @@ begin
   delete from public.mf_stories
   where id in (
     select id from public.mf_stories where user_id = auth.uid()
-    order by created_at desc, id desc offset 10
+    order by created_at desc, id desc offset 5
   );
   return created;
 end;

@@ -242,6 +242,23 @@ end;
 $$;
 revoke all on function public.mf_rename_group(uuid, text) from public;
 grant execute on function public.mf_rename_group(uuid, text) to authenticated;
+create or replace function public.mf_remove_group_member(gid uuid, target_uid uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or not public.mf_is_group_member(gid, auth.uid()) then
+    raise exception 'Only group members can remove people';
+  end if;
+  if target_uid = auth.uid() then
+    raise exception 'Use leave group to remove yourself';
+  end if;
+  if not public.mf_is_group_member(gid, target_uid) then
+    raise exception 'That person is not in this group';
+  end if;
+  delete from public.mf_group_members where group_id = gid and user_id = target_uid;
+end;
+$$;
+revoke all on function public.mf_remove_group_member(uuid, uuid) from public;
+grant execute on function public.mf_remove_group_member(uuid, uuid) to authenticated;
 drop policy if exists "mf_groups_update" on public.mf_groups;
 drop policy if exists "mf_groups_delete" on public.mf_groups;
 create policy "mf_groups_delete" on public.mf_groups for delete using (auth.uid() = created_by);

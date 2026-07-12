@@ -86,6 +86,7 @@ const db = {
     groupById: (gid) => sb.from('mf_groups')
         .select('*, mf_group_members(user_id, profiles:mf_profiles!mf_group_members_user_id_fkey(username, avatar))').eq('id', gid).single(),
     renameGroup: (gid, name) => sb.rpc('mf_rename_group', { gid, new_name: name }),
+    removeGroupMember: (gid, uid) => sb.rpc('mf_remove_group_member', { gid, target_uid: uid }),
     addGroupMember: (gid, uid) => sb.from('mf_group_members').insert({ group_id: gid, user_id: uid }),
     leaveGroup: (gid) => sb.from('mf_group_members').delete().match({ group_id: gid, user_id: state.me.id }),
 };

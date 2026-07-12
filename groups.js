@@ -396,6 +396,15 @@ const openGroup = (group, container = app) => {
             setGroupName(gp, payload.groupName);
             gSys(gp, `${payload.name || 'Someone'} renamed the group to ${payload.groupName}`);
         }
+        else if (payload.t === 'gmember-removed') {
+            if (payload.uid === state.me.id) {
+                toast('You were removed from this group.');
+                location.hash = '#/chats';
+            } else {
+                delete gp.members[payload.uid];
+                gSys(gp, `${payload.username || 'Someone'} was removed`);
+            }
+        }
     });
     ch.on('presence', { event: 'sync' }, () => updatePresence(gp));
     ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
@@ -413,6 +422,7 @@ const openGroup = (group, container = app) => {
     };
     $('.gadd', gp.node).onclick = () => pickFriends('Add to group', {
         exclude: new Set(Object.keys(members)),
+        members: Object.entries(members).filter(([uid]) => uid !== state.me.id).map(([id, p]) => ({ id, ...p })),
         onPick: async (uid, username) => {
             const { error } = await db.addGroupMember(gp.id, uid);
             if (error) {
@@ -423,6 +433,19 @@ const openGroup = (group, container = app) => {
             gp.members[uid] = { username };
             gSys(gp, `${username} was added`);
             toast(`${username} added to the group.`);
+            return true;
+        },
+        onRemove: async (uid, username) => {
+            const { error } = await db.removeGroupMember(gp.id, uid);
+            if (error) {
+                console.error('[mayfly] remove group member', error);
+                toast(`Could not remove ${username}.`);
+                return false;
+            }
+            delete gp.members[uid];
+            bcast(gp, { t: 'gmember-removed', uid, username });
+            gSys(gp, `${username} was removed`);
+            toast(`${username} removed from the group.`);
             return true;
         },
     });
@@ -457,6 +480,29 @@ const pickFriends = async (title, opts) => {
         ? `<input class="field" id="gname" placeholder="Group name…" style="margin:6px 0"><div id="plist"></div><button class="btn" id="gcreate">Create group</button>`
         : `<div id="plist"></div>`;
     const list = $('#plist', body);
+    const existing = opts.members || [];
+    if (existing.length) {
+        const label = el('<div class="picklabel">Members</div>');
+        body.insertBefore(label, list);
+        existing.forEach(p => {
+            const row = el(`<div class="urow">${avatarHTML(p.username, p.avatar)}<div class="who"><b>${esc(p.username)}</b></div><div class="acts"></div></div>`);
+            const remove = el('<button class="pill danger">Remove</button>');
+            remove.onclick = async () => {
+                remove.disabled = true; remove.textContent = 'Removing…';
+                try {
+                    const removed = await opts.onRemove(p.id, p.username);
+                    if (removed !== false) row.remove();
+                    else { remove.disabled = false; remove.textContent = 'Remove'; }
+                } catch (e) {
+                    console.error('[mayfly] group member removal', e);
+                    toast(`Could not remove ${p.username}.`);
+                    remove.disabled = false; remove.textContent = 'Remove';
+                }
+            };
+            $('.acts', row).appendChild(remove);
+            body.insertBefore(row, list);
+        });
+    }
     const pickable = friends.filter(p => !(opts.exclude && opts.exclude.has(p.id)));
     if (!pickable.length) list.innerHTML = `<div class="empty">No friends to add.</div>`;
     pickable.forEach(p => {

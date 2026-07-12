@@ -268,28 +268,32 @@ const updatePresence = (gp) => {
 };
 
 const wireGroupMic = (gp) => {
-    let recorder = null, stream = null, chunks = [], cancelled = false, draft = null, draftUrl = null, holding = false;
+    let recorder = null, stream = null, chunks = [], cancelled = false, draft = null, draftUrl = null, starting = false;
     const mic = $('.gmic', gp.node), recordBar = $('.grecord', gp.node);
+    const setRecording = (on) => {
+        mic.classList.toggle('recording', on); mic.innerHTML = icon(on ? 'stop' : 'mic');
+        mic.setAttribute('aria-label', on ? 'Stop recording voice clip' : 'Record voice clip');
+        mic.title = on ? 'Stop recording' : 'Record voice clip';
+    };
     const reset = () => {
-        mic.classList.remove('recording'); recordBar.hidden = true;
+        setRecording(false); recordBar.hidden = true;
         if (draftUrl) URL.revokeObjectURL(draftUrl);
         draft = null; draftUrl = null;
         recordBar.innerHTML = '';
     };
     const stop = () => { if (recorder?.state === 'recording') recorder.stop(); };
-    const start = async (e) => {
-        e?.preventDefault();
-        if (recorder?.state === 'recording' || draft) return;
-        holding = true; mic.setPointerCapture?.(e?.pointerId);
+    const start = async () => {
+        if (recorder?.state === 'recording' || draft || starting) return;
+        starting = true; mic.disabled = true;
         try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
         catch (e) { return toast('Microphone access is blocked.'); }
-        if (!holding) { stream.getTracks().forEach(t => t.stop()); return; }
+        finally { starting = false; mic.disabled = false; }
         chunks = []; cancelled = false;
         try { recorder = new MediaRecorder(stream); }
         catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('Voice recording is unavailable.'); }
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
-            stream.getTracks().forEach(t => t.stop()); mic.classList.remove('recording');
+            stream.getTracks().forEach(t => t.stop()); setRecording(false);
             const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
             recorder = null;
             if (cancelled || !blob.size) return reset();
@@ -300,12 +304,10 @@ const wireGroupMic = (gp) => {
             $('.gcancel', recordBar).onclick = reset;
             $('.gstop', recordBar).onclick = async () => { const clip = draft; reset(); await sendGroupMedia(gp, clip); };
         };
-        recorder.start(); mic.classList.add('recording'); recordBar.hidden = false;
-        recordBar.innerHTML = '<span>● Recording… release to preview</span>';
+        recorder.start(); setRecording(true); recordBar.hidden = false;
+        recordBar.innerHTML = '<span>● Recording… tap the mic again to stop</span>';
     };
-    mic.onpointerdown = start;
-    mic.onpointerup = () => { holding = false; stop(); };
-    mic.onpointercancel = () => { holding = false; cancelled = true; stop(); };
+    mic.onclick = () => recorder?.state === 'recording' ? stop() : start();
 };
 
 const startBackground = (group, pending = []) => {

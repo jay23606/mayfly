@@ -444,26 +444,33 @@ const sendFile = async (uid, file, kind) => {
     appendMedia(m, 'me'); histPush(uid, m);
 };
 const wireMic = (box, uid) => {
-    let rec = null, stream = null, chunks = [], holding = false, cancelled = false, draft = null, draftUrl = null;
+    let rec = null, stream = null, chunks = [], cancelled = false, draft = null, draftUrl = null, starting = false;
     const mic = $('.mic', box), tray = $('.voicepreview', box);
+    const setRecording = (on) => {
+        mic.classList.toggle('recording', on); mic.innerHTML = icon(on ? 'stop' : 'mic');
+        mic.setAttribute('aria-label', on ? 'Stop recording voice note' : 'Record a voice note');
+        mic.title = on ? 'Stop recording' : 'Record a voice note';
+    };
     const reset = () => {
-        mic.classList.remove('recording'); tray.hidden = true;
+        setRecording(false); tray.hidden = true;
         if (draftUrl) URL.revokeObjectURL(draftUrl);
         draft = null; draftUrl = null; tray.innerHTML = '';
     };
     const stop = () => { if (rec?.state === 'recording') rec.stop(); };
-    const start = async (e) => {
-        e?.preventDefault();
-        if (rec?.state === 'recording' || draft) return;
+    const start = async () => {
+        if (rec?.state === 'recording' || draft || starting) return;
         // Voice clips are live-only (no relay) — don't let one be recorded if it can't be sent.
         if (!isOnline(uid)) return appendBubble('(voice clips only send while your friend is online)', 'sys');
-        holding = true; mic.setPointerCapture?.(e?.pointerId);
-        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
-        if (!holding) { stream.getTracks().forEach(t => t.stop()); return; }
-        chunks = []; cancelled = false; rec = new MediaRecorder(stream);
+        starting = true; mic.disabled = true;
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+        catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
+        finally { starting = false; mic.disabled = false; }
+        chunks = []; cancelled = false;
+        try { rec = new MediaRecorder(stream); }
+        catch (e) { stream.getTracks().forEach(t => t.stop()); return appendBubble('(voice recording is unavailable)', 'sys'); }
         rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         rec.onstop = () => {
-            stream.getTracks().forEach(t => t.stop()); mic.classList.remove('recording');
+            stream.getTracks().forEach(t => t.stop()); setRecording(false);
             const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); rec = null;
             if (cancelled || !blob.size) return reset();
             draft = new File([blob], 'voice-note', { type: blob.type }); draftUrl = URL.createObjectURL(draft);
@@ -472,11 +479,9 @@ const wireMic = (box, uid) => {
             $('.vxc', tray).onclick = reset;
             $('.vsend', tray).onclick = async () => { const clip = draft; reset(); await sendFile(uid, clip, 'audio'); };
         };
-        rec.start(); mic.classList.add('recording');
+        rec.start(); setRecording(true);
     };
-    mic.onpointerdown = start;
-    mic.onpointerup = () => { holding = false; stop(); };
-    mic.onpointercancel = () => { holding = false; cancelled = true; stop(); };
+    mic.onclick = () => rec?.state === 'recording' ? stop() : start();
 };
 
 // P2P data connection for typing + media (text no longer needs it — it's async).

@@ -15,6 +15,12 @@ const memberMap = (group) => { const m = {}; (group.mf_group_members || []).forE
 const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; const line = el(html); l.appendChild(line); l.scrollTop = l.scrollHeight; return line; };
 const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
 const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
+const setGroupName = (gp, name) => {
+    gp.name = name;
+    gp.group.name = name;
+    const title = gp.node && $('.gname', gp.node);
+    if (title) title.textContent = name;
+};
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
 const notifyGroup = (gp, body) => { if (!gp.node && window.Notification?.permission === 'granted') new Notification(gp.name || 'Group', { body }); };
 
@@ -298,7 +304,9 @@ const startBackground = (group, pending = []) => {
     const ch = sb.channel('mfgroup:' + group.id, { config: { private: true, presence: { key: state.me.id }, broadcast: { self: false } } });
     gp.ch = ch;
     ch.on('broadcast', { event: 'g' }, ({ payload }) => {
-        if (!payload || payload.from === state.me.id || payload.t !== 'msg') return;
+        if (!payload || payload.from === state.me.id) return;
+        if (payload.t === 'gname' && payload.groupName) setGroupName(gp, payload.groupName);
+        if (payload.t !== 'msg') return;
         gp.pending.push({ text: payload.text, name: payload.name });
         notifyGroup(gp, `${payload.name || 'Someone'}: ${payload.text}`);
     });
@@ -337,7 +345,8 @@ const openGroup = (group, container = app) => {
         <div class="chathead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           <div class="gavatars">${avs || '👥'}</div>
-          <div class="who"><b>${esc(group.name || 'Group')}</b><div class="sub gonline">…</div></div>
+          <div class="who"><b class="gname">${esc(group.name || 'Group')}</b><div class="sub gonline">…</div></div>
+          ${group.created_by === state.me.id ? `<button class="icon grename" aria-label="Rename group">${icon('pencil')}</button>` : ''}
           <button class="icon gadd" aria-label="Add friend to group">${icon('userPlus')}</button>
           <button class="icon gcall" aria-label="Start a group call">${icon('phone')}</button>
         </div>
@@ -373,6 +382,10 @@ const openGroup = (group, container = app) => {
         if (!payload || payload.from === state.me.id) return;
         if (payload.t === 'msg') gText(gp, payload.name, payload.text, 'them');
         else if (payload.t === 'gsnap-opened') markGroupSnapOpened(gp, payload.id);
+        else if (payload.t === 'gname' && payload.groupName) {
+            setGroupName(gp, payload.groupName);
+            gSys(gp, `${payload.name || 'Someone'} renamed the group to ${payload.groupName}`);
+        }
     });
     ch.on('presence', { event: 'sync' }, () => updatePresence(gp));
     ch.subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ username: state.profile.username, avatar: state.profile.avatar, in_call: false }); });
@@ -381,6 +394,21 @@ const openGroup = (group, container = app) => {
     $('.gmute', gp.node).onclick = () => { const a = gp.call?.localStream.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setGCtl(gp, '.gmute', a.enabled, 'mic', 'micOff'); } };
     $('.gcam', gp.node).onclick = () => { const v = gp.call?.localStream.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setGCtl(gp, '.gcam', v.enabled, 'video', 'videoOff'); } };
     $('.ghang', gp.node).onclick = () => leaveCall(gp);
+    const rename = $('.grename', gp.node);
+    if (rename) rename.onclick = async () => {
+        const next = window.prompt('Group name', gp.name || 'Group');
+        if (next === null) return;
+        const name = next.trim().slice(0, 60);
+        if (!name) return void toast('Group name cannot be empty.');
+        if (name === gp.name) return;
+        rename.disabled = true;
+        const { error } = await db.renameGroup(gp.id, name);
+        rename.disabled = false;
+        if (error) return void toast('Could not rename the group.');
+        setGroupName(gp, name);
+        bcast(gp, { t: 'gname', groupName: name });
+        gSys(gp, `You renamed the group to ${name}`);
+    };
     $('.gadd', gp.node).onclick = () => pickFriends('Add to group', {
         exclude: new Set(Object.keys(members)),
         onPick: async (uid, username) => {

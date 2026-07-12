@@ -226,6 +226,9 @@ drop policy if exists "mf_groups_select" on public.mf_groups;
 create policy "mf_groups_select" on public.mf_groups for select using (public.mf_is_group_member(id, auth.uid()) or auth.uid() = created_by);
 drop policy if exists "mf_groups_insert" on public.mf_groups;
 create policy "mf_groups_insert" on public.mf_groups for insert with check (auth.uid() = created_by);
+drop policy if exists "mf_groups_update" on public.mf_groups;
+create policy "mf_groups_update" on public.mf_groups for update
+  using (auth.uid() = created_by) with check (auth.uid() = created_by);
 drop policy if exists "mf_groups_delete" on public.mf_groups;
 create policy "mf_groups_delete" on public.mf_groups for delete using (auth.uid() = created_by);
 drop policy if exists "mf_gm_select" on public.mf_group_members;

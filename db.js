@@ -85,6 +85,7 @@ const db = {
         .order('created_at', { ascending: false }),
     groupById: (gid) => sb.from('mf_groups')
         .select('*, mf_group_members(user_id, profiles:mf_profiles!mf_group_members_user_id_fkey(username, avatar))').eq('id', gid).single(),
+    renameGroup: (gid, name) => sb.from('mf_groups').update({ name }).eq('id', gid),
     addGroupMember: (gid, uid) => sb.from('mf_group_members').insert({ group_id: gid, user_id: uid }),
     leaveGroup: (gid) => sb.from('mf_group_members').delete().match({ group_id: gid, user_id: state.me.id }),
 };

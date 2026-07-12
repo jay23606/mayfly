@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl,
-    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeAvatar,
+    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
@@ -272,7 +272,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
         // Friends receive an individual Snap; groups receive it in their chat only.
         const targets = list.filter(u => directIds.includes(u.id));
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
-        let ok = 0, blocked = 0;
+        let ok = 0, blocked = 0, novideo = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
         let done = 0;
@@ -283,6 +283,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
             results.forEach((r, index) => {
                 if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
+                else if (r === 'novideo') novideo++;
             });
             done += batch.length;
         }
@@ -293,8 +294,10 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
                 if (await sendSnapToGroupChat(g.id, file, timer)) ok++;
             }
         }
-        if (ok) toast(`Sent 🐛`);
-        if (blocked) toast('Some friends already have an unopened snap from you.');
+        // one toast wins (it replaces), so prefer the most useful message
+        if (novideo) toast(`Video snaps only send to friends who are online${ok ? ` · sent ${ok}` : ''}.`);
+        else if (ok) toast(`Sent 🐛`);
+        else if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
         location.hash = defaultRecipientId ? '#/c/' + defaultRecipientId : (defaultGroupId ? '#/group/' + defaultGroupId : '#/chats');
     };
@@ -306,9 +309,9 @@ const sendSnap = async (shot, u, caption, secs) => {
     const base = { sender_id: state.me.id, recipient_id: u.id, preview: shot.preview,
         caption, w: shot.w, h: shot.h, timer: secs };
     const kind = shot.mime?.startsWith('video/') ? 'video' : 'photo';
-    // The relay must retain the original image MIME too: rawBlob may be PNG, WebP,
-    // or a native-resolution JPEG rather than the composer's resized display copy.
-    const taggedDelivery = (k) => `${k}:${encodeURIComponent(shot.mime || 'image/jpeg')}`;
+    // Live P2P keeps the original MIME (rawBlob may be PNG/WebP/native JPEG). The relay
+    // is re-encoded to a size-capped WebP, so its tag reflects that format instead.
+    const taggedDelivery = (k, m) => `${k}:${encodeURIComponent(m || shot.mime || 'image/jpeg')}`;
     try {
         if (isOnline(u.id)) {
             const id = uuid();
@@ -320,19 +323,19 @@ const sendSnap = async (shot, u, caption, secs) => {
             db.bumpStreak(u.id);
             return { id, kind };
         }
-        // offline → relay. Enforce the one-pending-per-recipient cap.
+        // offline → relay. Video is live-only (no small cap fits a clip); images only.
+        if (kind === 'video') return 'novideo';
+        // Enforce the one-pending-per-recipient cap.
         const { count } = await db.pendingRelayTo(u.id);
         if (count && count >= 1) return 'cap';
-        if (!isMediaUrl(u.avatar) && !u.pubkey) { /* fallthrough */ }
         if (!u.pubkey) { toast(`${u.username} hasn't finished setting up mayfly.`); return false; }
         const id = uuid();
-        const bytes = shot.rawBlob
-            ? new Uint8Array(await shot.rawBlob.arrayBuffer())
-            : await dataUrlToBytes(shot.full);
+        // Re-encode to a WebP that fits the relay budget (the live copy stays full-res).
+        const { bytes, mime } = await makeRelayImage(shot.rawBlob || await fetch(shot.full).then(r => r.blob()));
         const { ct, iv, ephPub } = await encryptFor(JSON.parse(u.pubkey), bytes);
         const up = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ct]), { contentType: 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;
-        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay'), iv, eph_pub: ephPub });
+        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay', mime), iv, eph_pub: ephPub });
         if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
         db.bumpStreak(u.id);
         return { id, kind };

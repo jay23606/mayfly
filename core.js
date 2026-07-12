@@ -11,6 +11,7 @@ const PREVIEW_PX   = 24;    // blurred LQIP shown in the inbox before you open a
 const FULL_PX      = 1080;  // longest edge of the full snap image (P2P / encrypted)
 const FULL_Q       = 0.85;  // JPEG quality of the full snap
 const STORY_PREVIEW_MAX = 20 * 1024; // maximum database bytes for an offline Story preview
+const RELAY_MAX = 100 * 1024;        // maximum bytes for an encrypted offline relay snap (keeps Storage bounded)
 const SNAP_TTL_H   = 24;    // a snap self-destructs this many hours after it's sent
 const STORY_TTL_H  = 24;    // stories are visible for one day
 
@@ -122,6 +123,26 @@ const makeStoryPreview = async (blob) => {
     im.close?.();
     return preview;
 };
+// The offline-relay copy of a photo, re-encoded as WebP within a byte budget so one
+// user's encrypted Storage footprint stays bounded. Steps resolution then quality down
+// until the encoded image fits; the live P2P copy keeps full quality (it never touches
+// the server). Returns { bytes: Uint8Array, mime }. Video is never relayed (live-only).
+const encodeBytes = (canvas, mime, q) => new Promise((res, rej) =>
+    canvas.toBlob(b => b ? b.arrayBuffer().then(a => res(new Uint8Array(a))) : rej(new Error('encode failed')), mime, q));
+const makeRelayImage = async (blob, cap = RELAY_MAX) => {
+    const im = await decode(blob);
+    const mime = canEncodeWebp() ? 'image/webp' : 'image/jpeg';
+    try {
+        for (let edge = Math.min(FULL_PX, Math.max(im.width, im.height)); edge >= 240; edge = Math.floor(edge * 0.8)) {
+            const c = scaleTo(im, edge);
+            for (const q of [0.82, 0.72, 0.62, 0.5, 0.4]) {
+                const bytes = await encodeBytes(c, mime, q);
+                if (bytes.byteLength <= cap) return { bytes, mime };
+            }
+        }
+        return { bytes: await encodeBytes(scaleTo(im, 240), mime, 0.4), mime };  // smallest fallback
+    } finally { im.close?.(); }
+};
 // A video snap keeps its original recording and derives a tiny image preview for the inbox.
 const processVideo = async (blob) => {
     const mime = blob.type || 'video/webm';
@@ -170,5 +191,5 @@ const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
-    processImage, processCanvas, processVideo, makeStoryPreview, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
+    processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
     isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, fullCache, isOnline };

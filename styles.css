@@ -76,9 +76,10 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .camwrap{display:flex;flex-direction:column;height:calc(100vh - var(--tab-h));max-width:560px;padding:0 0 var(--tab-h)}
 .viewport{position:relative;flex:1;border-radius:24px;overflow:hidden;margin:6px 12px;background:#000}
 .viewport video{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.viewport #filterpreview{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
 .viewport video::-webkit-media-controls{display:none!important}
 .viewport video::-webkit-media-controls-enclosure{display:none!important}
-.camerr{position:absolute;inset:auto 16px 16px;color:#fff;background:#000000aa;padding:10px 14px;border-radius:12px;font-size:13px;text-align:center}
+.camerr{position:absolute;z-index:1;inset:auto 16px 16px;color:#fff;background:#000000aa;padding:10px 14px;border-radius:12px;font-size:13px;text-align:center}
 .cambar{display:flex;align-items:center;justify-content:space-around;padding:16px 24px}
 .filterselect{align-self:center;margin:-6px auto 8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
 .shutter{width:74px;height:74px;border-radius:50%;border:5px solid #fff;background:transparent;cursor:pointer;transition:.1s}

@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { FILTERS, filterCss, drawFiltered, filterImageBlob } from './filters.js';
+import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
@@ -70,6 +70,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
     app.innerHTML = `<main class="camwrap">
       <div class="viewport">
         <video id="cam" autoplay playsinline muted disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>
+        <canvas id="filterpreview" hidden aria-hidden="true"></canvas>
         <div class="camerr" id="camerr"></div>
       </div>
       <select class="filterselect" id="filter" aria-label="Photo filter">${FILTERS.map(f => `<option value="${f.id}">${f.label}</option>`).join('')}</select>
@@ -81,9 +82,31 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
       </div>
     </main>`;
     const finishShot = (shot) => compose(shot, defaultRecipientId, groupId);
-    let activeFilter = 'normal';
+    let activeFilter = 'normal', previewFrame = null, previewLastDraw = 0;
     const filter = $('#filter');
-    const updateFilter = () => { activeFilter = filter.value; $('#cam').style.filter = filterCss(activeFilter); };
+    const preview = $('#filterpreview');
+    const drawLivePreview = (now) => {
+        const video = $('#cam');
+        if (activeFilter === 'normal' || !preview.isConnected) return;
+        if (!video?.videoWidth) { previewFrame = requestAnimationFrame(drawLivePreview); return; }
+        if (!previewLastDraw || now - previewLastDraw >= 120) {
+            const scale = Math.min(1, 360 / video.videoWidth);
+            preview.width = Math.max(1, Math.round(video.videoWidth * scale));
+            preview.height = Math.max(1, Math.round(video.videoHeight * scale));
+            const ctx = preview.getContext('2d');
+            if (facing === 'user') { ctx.translate(preview.width, 0); ctx.scale(-1, 1); }
+            drawFiltered(ctx, video, activeFilter);
+            previewLastDraw = now;
+        }
+        previewFrame = requestAnimationFrame(drawLivePreview);
+    };
+    const updateFilter = () => {
+        activeFilter = filter.value;
+        $('#cam').style.filter = 'none';
+        cancelAnimationFrame(previewFrame); previewFrame = null; previewLastDraw = 0;
+        preview.hidden = activeFilter === 'normal';
+        if (activeFilter !== 'normal') previewFrame = requestAnimationFrame(drawLivePreview);
+    };
     filter.onchange = updateFilter;
     $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
@@ -176,6 +199,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         document.removeEventListener('keydown', volumeDown);
         document.removeEventListener('keyup', volumeUp);
         clearTimeout(holdTimer);
+        cancelAnimationFrame(previewFrame);
     };
     startCamera();
 };

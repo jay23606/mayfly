@@ -183,7 +183,8 @@ export const openConversation = async (box, uid) => {
     $('.callbtn', box).onclick = (e) => callMenu(e.currentTarget, (video) => callUser(uid, username, video));
     $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
     const fileInput = $('.fileinput', box);
-    $('.attach', box).onclick = () => fileInput.click();
+    // Files are live-only (no relay) — don't open the picker if it can't be sent.
+    $('.attach', box).onclick = () => isOnline(uid) ? fileInput.click() : appendBubble('(files only send while your friend is online)', 'sys');
     fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };
     wireMic(box, uid);
     const form = $('.tin', box), input = $('.tinput', box);

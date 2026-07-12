@@ -513,7 +513,9 @@ const playStories = (groups, startGroup = 0) => {
         // The database-backed Story preview is intentionally size-bounded, but it
         // should remain readable when the author is offline.
         img.style.filter = 'none'; img.src = safeMediaUrl(s.preview);
-        if (!mine) db.viewStory(s.id).then(() => {}, () => {});
+        if (!mine) db.viewStory(s.id).then(({ error }) => {
+            if (!error) window.dispatchEvent(new Event('mf-story-viewed'));
+        }, () => {});
         // pull the full image P2P (from our own IndexedDB if it's ours)
         const shownGroup = groupIndex;
         let full = mine ? await idb.get('story:' + s.id) : await fetchSnap(s.id, s.user_id);
@@ -797,6 +799,16 @@ const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnrea
 window.addEventListener('chat-unread', setChatDot);
 // tapping a friend's ringed avatar in the chat list (chat.js) plays their Story
 window.addEventListener('mf-play-story', (e) => { const items = e.detail?.items; if (items?.length) playStories([{ items, mine: false }], 0); });
+// Keep both Story-ring surfaces in sync as soon as a view is recorded, rather than
+// waiting for the next route render or page refresh.
+window.addEventListener('mf-story-viewed', () => {
+    const bar = $('#storiesbar'); if (bar) renderStoriesBar(bar);
+    const convs = $('#convs');
+    if (convs) {
+        const match = location.hash.match(/^#\/c\/([^/]+)/);
+        renderConvs(convs, match?.[1] || null);
+    }
+});
 document.addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) location.hash = g.dataset.go; });
 window.addEventListener('hashchange', () => { mountChrome(); route(); });
 

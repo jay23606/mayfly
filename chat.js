@@ -417,7 +417,7 @@ const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia
     video: video ? { facingMode: { ideal: facing } } : false,
     audio: true,
 });
-let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false;
+let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null;
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
 // swap a control button's glyph + dim (red) it when the track is off
 const setCtl = (btn, on, onName, offName) => { if (!btn) return; btn.innerHTML = icon(on ? onName : offName); btn.classList.toggle('off', !on); };
@@ -458,6 +458,7 @@ const swapCallViews = () => {
     renderCallViews();
 };
 const endCall = () => {
+    clearTimeout(callStatusTimer); callStatusTimer = null;
     try { curCall?.close(); } catch (e) {} curCall = null;
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     const rv = $('#rv'), lv = $('#lv'); if (rv) rv.srcObject = null; if (lv) lv.srcObject = null;
@@ -467,13 +468,26 @@ const endCall = () => {
 };
 const wireCallMedia = (c) => {
     curCall = c;
+    clearTimeout(callStatusTimer);
+    callStatusTimer = setTimeout(() => {
+        if (curCall === c && !remoteStream) setStat('Still connecting — check your network or try again.');
+    }, 12000);
     c.on('stream', (s) => {
         const remote = $('#rv'); if (!remote || !s) return;
         remoteStream = s;
         // `autoplay` is present in the markup, but explicitly playing here covers
         // browsers that do not restart a video after its srcObject changes.
         renderCallViews();
+        clearTimeout(callStatusTimer); callStatusTimer = null;
         setStat($('#callo').classList.contains('voice') ? callPeerName : '');
+    });
+    c.on('state', ({ connection, ice }) => {
+        if (connection === 'connected' || ice === 'connected' || ice === 'completed') {
+            clearTimeout(callStatusTimer); callStatusTimer = null;
+            return;
+        }
+        if (connection === 'disconnected' || ice === 'disconnected') setStat('Reconnecting…');
+        if (connection === 'failed' || ice === 'failed') toast('Call failed — the network could not establish a direct connection.');
     });
     c.on('close', endCall); c.on('error', endCall);
 };

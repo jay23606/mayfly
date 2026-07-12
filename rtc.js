@@ -74,7 +74,8 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
 // Media (video/voice call) connection — same PeerJS-shaped surface as instamegle.
 const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
     const ev = emitter(); const pc = new RTCPeerConnection(ICE);
-    let remoteSet = false, closed = false, remoteStream = null; const pend = [];
+    let remoteSet = false, closed = false, remoteStream = null;
+    let lastState = { connection: pc.connectionState, ice: pc.iceConnectionState }; const pend = [];
     const fireClose = () => { if (closed) return; closed = true; conns.delete(cid); ev.emit('close'); };
     const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
     const api = {
@@ -84,6 +85,7 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
         on(e, fn) {
             ev.on(e, fn);
             if (e === 'stream' && remoteStream) queueMicrotask(() => fn(remoteStream));
+            if (e === 'state') queueMicrotask(() => fn(lastState));
             return api;
         },
         answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
@@ -106,13 +108,19 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
         }
         ev.emit('stream', remoteStream);
     };
+    const emitState = () => {
+        lastState = { connection: pc.connectionState, ice: pc.iceConnectionState };
+        ev.emit('state', lastState);
+    };
     let discT = null;
     pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
+        emitState();
         if (s === 'connected') { clearTimeout(discT); discT = null; }
         else if (s === 'disconnected') { clearTimeout(discT); discT = setTimeout(fireClose, 8000); }
         else if (s === 'failed' || s === 'closed') { clearTimeout(discT); fireClose(); }
     };
+    pc.oniceconnectionstatechange = emitState;
     if (initiator) {
         addTracks(stream);
         pc.createOffer().then(o => pc.setLocalDescription(o))

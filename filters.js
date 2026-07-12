@@ -37,13 +37,14 @@ const brightness = (data, at) => data[at] * .2126 + data[at + 1] * .7152 + data[
 
 const fisheye = (ctx, source) => {
     const input = sourcePixels(ctx, source), { width, height } = input, src = input.data, output = new ImageData(width, height), dst = output.data;
-    const cx = width / 2, cy = height / 2, radius = Math.min(cx, cy);
+    const cx = width / 2, cy = height / 2;
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-        const nx = (x - cx) / radius, ny = (y - cy) / radius, r = Math.hypot(nx, ny), at = (y * width + x) * 4;
-        if (r > 1) { dst[at + 3] = 255; continue; }
-        const scale = r ? Math.pow(r, 1.7) / r : 0;
-        const sx = Math.max(0, Math.min(width - 1, Math.round(cx + nx * scale * radius)));
-        const sy = Math.max(0, Math.min(height - 1, Math.round(cy + ny * scale * radius))), from = (sy * width + sx) * 4;
+        const nx = (x - cx) / cx, ny = (y - cy) / cy, r = Math.hypot(nx, ny), at = (y * width + x) * 4;
+        // Clamp the radial sample at the frame edge, rather than making the
+        // corners black. This retains a full rectangular photo with a bulging lens.
+        const mappedRadius = Math.min(1, r), scale = r ? Math.pow(mappedRadius, 1.7) / r : 0;
+        const sx = Math.max(0, Math.min(width - 1, Math.round(cx + nx * scale * cx)));
+        const sy = Math.max(0, Math.min(height - 1, Math.round(cy + ny * scale * cy))), from = (sy * width + sx) * 4;
         dst[at] = src[from]; dst[at + 1] = src[from + 1]; dst[at + 2] = src[from + 2]; dst[at + 3] = 255;
     }
     putPixels(ctx, output);

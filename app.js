@@ -89,8 +89,8 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         const video = $('#cam');
         if (activeFilter === 'normal' || !preview.isConnected) return;
         if (!video?.videoWidth) { previewFrame = requestAnimationFrame(drawLivePreview); return; }
-        if (!previewLastDraw || now - previewLastDraw >= 150) {
-            const scale = Math.min(1, 480 / video.videoWidth);
+        if (!previewLastDraw || now - previewLastDraw >= 180) {
+            const scale = Math.min(1, 640 / video.videoWidth);
             preview.width = Math.max(1, Math.round(video.videoWidth * scale));
             preview.height = Math.max(1, Math.round(video.videoHeight * scale));
             const ctx = preview.getContext('2d');

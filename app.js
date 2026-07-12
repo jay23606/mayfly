@@ -539,9 +539,13 @@ const playStories = (groups, startGroup = 0) => {
         viewers.forEach(v => {
             const u = v.viewer; if (!u) return;
             const theirStory = storyByUid.get(u.id);
-            const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b><div class="sub">${esc(ago(v.viewed_at))}</div></div><div class="acts">${theirStory ? '<button class="pill vstory">Story</button>' : ''}<button class="pill primary vchat">Chat</button></div></div>`);
+            // Viewers with a live Story get a ring on their avatar; tapping it plays it.
+            const avatar = theirStory
+                ? `<button class="storyavatar" aria-label="View ${esc(u.username)}'s story">${avatarHTML(u.username, u.avatar, 'hasstory')}</button>`
+                : avatarHTML(u.username, u.avatar);
+            const row = el(`<div class="urow">${avatar}<div class="who"><b>${esc(u.username)}</b><div class="sub">${esc(ago(v.viewed_at))}</div></div><div class="acts"><button class="pill primary vchat">Chat</button></div></div>`);
             $('.vchat', row).onclick = () => { m.remove(); close(); location.hash = '#/c/' + u.id; };
-            if (theirStory) $('.vstory', row).onclick = () => { m.remove(); close(); playStories([{ items: theirStory, mine: false }], 0); };
+            if (theirStory) $('.storyavatar', row).onclick = () => { m.remove(); close(); playStories([{ items: theirStory, mine: false }], 0); };
             listBody.appendChild(row);
         });
         const dismiss = () => { m.remove(); resumeAdvance(); };

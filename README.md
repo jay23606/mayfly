@@ -14,7 +14,7 @@ Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses th
 - **End-to-end encryption** (`crypto.js`): every relayed snap is encrypted to the recipient's ECDH P-256 public key (ECIES → AES-GCM). The private key is generated on-device and never leaves it, so the server only ever holds random bytes.
 - **The server never holds a viewable photo.** The only image data in Postgres is a ~24px blurred LQIP preview so the inbox can show *something* before you open a snap.
 - **Offline cap:** while a friend is offline you can have at most **one** unopened snap waiting for them (bounds relay storage).
-- **View-once:** opening a snap streams/decrypts it, shows it for its timer, then hard-deletes the row (and the relay blob).
+- **Chat-first Snaps:** Snaps stay in the recipient's local chat history by default. Choosing a 3/5/10-second timer makes one view full-screen, then hard-deletes the row (and relay blob).
 - **Streaks** 🔥 count consecutive days you and a friend snap each other.
 
 ## Files

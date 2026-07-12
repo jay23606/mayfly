@@ -143,11 +143,12 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
 };
 
 // ===================== compose: caption, timer, choose friends, send =====================
-let timer = 5;
+// A Snap normally stays in the recipient's chat. A positive timer makes it view-once.
+let timer = 0;
 const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) => {
     stopStream();
     const isVideo = shot.mime?.startsWith('video/');
-    if (isVideo) timer = shot.duration <= 3 ? 3 : shot.duration <= 5 ? 5 : 10;
+    timer = 0;
     // Preview the original Blob URL. `full` remains the encoded payload used for delivery.
     const previewUrl = isVideo ? (shot.localPreviewUrl || shot.full) : shot.full;
     const releasePreview = () => { if (shot.localPreviewUrl) URL.revokeObjectURL(shot.localPreviewUrl); };
@@ -155,7 +156,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
       <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
         ${isVideo ? `<video class="composevideo" src="${safeMediaUrl(previewUrl)}" autoplay muted loop controls playsinline></video>` : ''}
         <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
-        <div class="timerpick">${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
+        <div class="timerpick"><button class="tchip ${timer === 0 ? 'on' : ''}" data-t="0">Keep</button>${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
       </div>
       <div class="sendrow">
@@ -285,7 +286,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
             const file = await snapFile();
             for (const g of selectedGroups) {
                 send.textContent = `Sending to ${g.name || 'group'}…`;
-                if (await sendSnapToGroupChat(g.id, file)) ok++;
+                if (await sendSnapToGroupChat(g.id, file, timer)) ok++;
             }
         }
         if (ok) toast(`Sent 🐛`);

@@ -7,7 +7,8 @@ import { encryptText, decryptText, decryptWith } from './crypto.js';
 // ===================== unified conversations (snaps + chat, Snapchat-style) =====================
 // TEXT is async + end-to-end encrypted via mf_messages (works even when the friend is
 // offline — they pick it up on next open, then the row is deleted). MEDIA / voice notes
-// / video calls are live P2P (both online). SNAPS show inline as "Tap to view" cards.
+// / video calls are live P2P (both online). Snaps normally become inline chat media;
+// a positive timer keeps the full-screen view-once treatment.
 // Each device keeps its own thread history in IndexedDB (thread:<uid>); nothing readable
 // lives on the server.
 
@@ -204,7 +205,8 @@ const renderThreadBody = async (uid) => {
 };
 const snapCard = (s) => {
     const kind = snapKind(s), label = kind === 'video' ? 'Video Snap' : 'Photo Snap';
-    const card = el(`<button class="snapcard ${kind} them"><span class="sq">${kind === 'video' ? '▶' : '●'}</span> Tap to view ${label} <span class="sqt">${ago(s.created_at)}</span></button>`);
+    const action = Number(s.timer) > 0 ? 'Tap to view' : 'Tap to open';
+    const card = el(`<button class="snapcard ${kind} them"><span class="sq">${kind === 'video' ? '▶' : '●'}</span> ${action} ${label} <span class="sqt">${ago(s.created_at)}</span></button>`);
     card.onclick = () => openSnap(s, card);
     return card;
 };
@@ -224,7 +226,7 @@ const sendText = async (uid, username, text) => {
     db.bumpStreak(uid);
 };
 
-// ===================== view-once snap player =====================
+// ===================== snap opening =====================
 const openSnap = async (s, card) => {
     if (card) { card.disabled = true; card.classList.add('opening'); }
     let full = null;
@@ -233,8 +235,29 @@ const openSnap = async (s, card) => {
         else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); } }
     } catch (e) { console.error('[mayfly] open snap', e); }
     if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
-    const u = s.sender || {};
     const video = snapMime(s).startsWith('video/');
+    // The default (timer 0) saves the opened media into this device's chat history,
+    // then consumes the encrypted/live delivery. It will render inline like any file.
+    if (!(Number(s.timer) > 0)) {
+        try {
+            const blob = await fetch(full).then(r => r.blob());
+            const m = {
+                kind: 'media', me: false, name: video ? 'Video Snap' : 'Photo Snap',
+                mime: snapMime(s), mediaKind: video ? 'video' : 'image',
+                data: await blobToDataURL(blob), caption: s.caption || '', at: new Date(s.created_at).getTime(),
+            };
+            await histPush(s.sender_id, m);
+            if (full.startsWith('blob:')) URL.revokeObjectURL(full);
+            await burnSnap(s, card);
+            if (openUid === s.sender_id) await renderThreadBody(s.sender_id);
+        } catch (e) {
+            console.error('[mayfly] save inline snap', e);
+            toast('Could not save this Snap into the chat.');
+            card?.classList.remove('opening'); if (card) card.disabled = false;
+        }
+        return;
+    }
+    const u = s.sender || {};
     const media = video ? `<video src="${safeMediaUrl(full)}" autoplay muted controls playsinline></video>` : `<img src="${safeMediaUrl(full)}" alt="snap">`;
     const ov = el(`<div class="player">${media}${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
     document.body.appendChild(ov);
@@ -277,7 +300,7 @@ const mediaBubble = (m, cls) => {
         : m.mediaKind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
         : m.mediaKind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(m.name || 'file')}">📎 ${esc(m.name || 'file')}</a>`;
-    return el(`<div class="b ${cls} media">${inner}</div>`);
+    return el(`<div class="b ${cls} media">${inner}${m.caption ? `<div class="snapcaption">${esc(m.caption)}</div>` : ''}</div>`);
 };
 const sendFile = async (uid, file, kind) => {
     const c = conns.get(uid);

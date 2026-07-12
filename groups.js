@@ -18,7 +18,7 @@ const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
 const notifyGroup = (gp, body) => { if (!gp.node && window.Notification?.permission === 'granted') new Notification(gp.name || 'Group', { body }); };
 
-// ---- group P2P media (files, clips, and view-once snaps) ----
+// ---- group P2P media (files, clips, inline Snaps, and timed view-once Snaps) ----
 const MEDIA_MAX = 20 * 1024 * 1024;
 const gid = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
 const waitDrain = async (conn) => {
@@ -39,11 +39,12 @@ const groupMediaBubble = (gp, media, cls, name = '') => {
         : media.kind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
         : media.kind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(media.name || 'file')}">📎 ${esc(media.name || 'file')}</a>`;
-    gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}</div>`);
+    gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}${media.caption ? `<div class="snapcaption">${esc(media.caption)}</div>` : ''}</div>`);
 };
 const groupSnapCard = (gp, media, cls, name = '') => {
     const l = $('.chatlog', gp.node); if (!l) return;
     const kind = media.kind === 'video' ? 'video' : 'photo';
+    if (!(Number(media.timer) > 0)) return groupMediaBubble(gp, media, cls, name);
     if (cls === 'me') {
         // sender side: a Delivered → Opened receipt (no tappable card)
         l.appendChild(el(`<div class="msgstatus me ${kind} delivered" data-snap="${media.id}"><span class="si"></span><span class="sl">Delivered</span></div>`));
@@ -57,7 +58,7 @@ const groupSnapCard = (gp, media, cls, name = '') => {
         document.body.appendChild(ov);
         // tell the sender we opened it (they flip Delivered → Opened)
         const finish = () => { clearTimeout(t); ov.remove(); URL.revokeObjectURL(media.url); card.remove(); bcast(gp, { t: 'gsnap-opened', id: media.id }); };
-        const t = setTimeout(finish, 5000);
+        const t = setTimeout(finish, Number(media.timer) * 1000);
         ov.onclick = finish;
         if (media.kind === 'video') {
             const video = $('video', ov);
@@ -120,13 +121,13 @@ export const onIncomingGroupData = (conn) => {
     if (!gp || !gp.members[conn.peer]) return conn.close();
     wireGroupData(gp, conn.peer, conn);
 };
-const sendGroupMedia = async (gp, file, snap = false) => {
+const sendGroupMedia = async (gp, file, snap = false, timer = 0) => {
     if (!file) return;
     if (file.size > MEDIA_MAX) return toast(`Media is too large (max ${Math.round(MEDIA_MAX / 1e6)} MB).`);
     const peers = await readyGroupPeers(gp);
     if (!peers.length) return toast('Group members need this chat open to receive media.');
     const kind = mimeKind(file.type), id = gid(), bytes = await file.arrayBuffer();
-    const meta = { t: 'gmedia-meta', id, bytes: bytes.byteLength, mime: file.type, kind, name: file.name || kind, nameFrom: state.profile.username, snap };
+    const meta = { t: 'gmedia-meta', id, bytes: bytes.byteLength, mime: file.type, kind, name: file.name || kind, nameFrom: state.profile.username, snap, timer: snap ? Math.max(0, Number(timer) || 0) : 0 };
     await Promise.all(peers.map(async (conn) => {
         conn.send(meta);
         const sent = await sendGroupBytes(conn, bytes);
@@ -140,12 +141,12 @@ const sendGroupMedia = async (gp, file, snap = false) => {
     }
 };
 
-// Send a captured snap into a group's chat (not to members individually). Reuses the
-// group's live P2P media path so it lands as a "Tap to view Snap" card in the thread.
-export const sendSnapToGroupChat = async (groupId, file) => {
+// Send a captured snap into a group's chat (not to members individually). Default
+// Snaps land inline; choosing a timer turns them into a view-once card.
+export const sendSnapToGroupChat = async (groupId, file, timer = 0) => {
     const gp = (current && current.id === groupId) ? current : backgrounds.get(groupId);
     if (!gp) return false;
-    try { await sendGroupMedia(gp, file, true); return true; }
+    try { await sendGroupMedia(gp, file, true, timer); return true; }
     catch (e) { console.error('[mayfly] group snap failed', e); return false; }
 };
 

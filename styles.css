@@ -328,3 +328,14 @@ main.chats.showthread .threadpane{display:flex}
   background:#000;border:1px solid var(--line);color:#fff;padding:12px 18px;border-radius:14px;
   opacity:0;pointer-events:none;transition:.25s;max-width:88vw;text-align:center;font-size:14px}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* On phones the navigation belongs above the conversation, not beside the reply
+   field. Desktop keeps the conventional bottom bar. */
+@media(max-width:719px){
+  #tabbar{top:0;bottom:auto;height:calc(var(--tab-h) + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);padding-bottom:0;border-top:0;border-bottom:1px solid var(--line)}
+  header{top:calc(var(--tab-h) + env(safe-area-inset-top));margin-top:calc(var(--tab-h) + env(safe-area-inset-top))}
+  main{padding-bottom:20px}
+  .camwrap{height:calc(var(--app-vh, 100dvh) - var(--tab-h) - 56px - env(safe-area-inset-top));padding-bottom:0}
+  body.inchat main.chats{height:var(--app-vh, 100dvh);padding-top:calc(var(--tab-h) + env(safe-area-inset-top))}
+  .toast{bottom:calc(20px + env(safe-area-inset-bottom))}
+}

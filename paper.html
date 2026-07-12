@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snaps Without a Server &mdash; mayfly vs. Snapchat</title>
+<meta name="description" content="A plain-English architecture comparison: how mayfly rebuilds a disappearing-photo app with no server in the middle of your media, how that differs from Snapchat's store-and-forward cloud, and an honest ledger of where each design wins and hurts.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%9B%3C/text%3E%3C/svg%3E">
+<style>
+  /* ------- Design tokens: light is the base, dark redefines only the tokens ------- */
+  :root{
+    --ground:#F6F5FB;
+    --surface:#FDFDFF;
+    --surface-2:#EFEDF8;
+    --ink:#1A1726;
+    --ink-soft:#38334A;
+    --muted:#6A6580;
+    --faint:#9C97AE;
+    --hairline:#E4E0F0;
+    --hairline-strong:#CDC7E2;
+    --accent:#5B3FD6;
+    --accent-bright:#6F4BFF;
+    --teal:#0C8F80;
+    --amber:#9A5A1E;
+    --wash:rgba(124,92,255,.06);
+    --wash-strong:rgba(124,92,255,.11);
+    --shadow:0 1px 2px rgba(26,23,38,.05),0 8px 30px rgba(26,23,38,.05);
+    --dot-none-bd:#BCB6CE;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0A0A0F;
+      --surface:#14141C;
+      --surface-2:#1C1C27;
+      --ink:#F2F2F7;
+      --ink-soft:#CFCBDD;
+      --muted:#9A9AB0;
+      --faint:#5E5A70;
+      --hairline:#26263A;
+      --hairline-strong:#33324A;
+      --accent:#9F88FF;
+      --accent-bright:#B3A1FF;
+      --teal:#00E0C6;
+      --amber:#DDA65A;
+      --wash:rgba(124,92,255,.09);
+      --wash-strong:rgba(124,92,255,.16);
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.35);
+      --dot-none-bd:#3A3A4E;
+    }
+  }
+  /* Explicit toggle must win in both directions */
+  :root[data-theme="light"]{
+    --ground:#F6F5FB;--surface:#FDFDFF;--surface-2:#EFEDF8;--ink:#1A1726;--ink-soft:#38334A;
+    --muted:#6A6580;--faint:#9C97AE;--hairline:#E4E0F0;--hairline-strong:#CDC7E2;--accent:#5B3FD6;
+    --accent-bright:#6F4BFF;--teal:#0C8F80;--amber:#9A5A1E;--wash:rgba(124,92,255,.06);--wash-strong:rgba(124,92,255,.11);
+    --shadow:0 1px 2px rgba(26,23,38,.05),0 8px 30px rgba(26,23,38,.05);--dot-none-bd:#BCB6CE;
+  }
+  :root[data-theme="dark"]{
+    --ground:#0A0A0F;--surface:#14141C;--surface-2:#1C1C27;--ink:#F2F2F7;--ink-soft:#CFCBDD;
+    --muted:#9A9AB0;--faint:#5E5A70;--hairline:#26263A;--hairline-strong:#33324A;--accent:#9F88FF;
+    --accent-bright:#B3A1FF;--teal:#00E0C6;--amber:#DDA65A;--wash:rgba(124,92,255,.09);--wash-strong:rgba(124,92,255,.16);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.35);--dot-none-bd:#3A3A4E;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+
+  body{
+    margin:0;
+    background:var(--ground);
+    color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+    font-size:18px;
+    line-height:1.72;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  .sans{font-family:"Segoe UI",-apple-system,system-ui,"Helvetica Neue",Arial,sans-serif}
+  .mono{font-family:"Cascadia Code","SF Mono","JetBrains Mono",Consolas,"Liberation Mono",monospace}
+
+  /* ------- Layout ------- */
+  .wrap{max-width:720px;margin:0 auto;padding:0 24px}
+  .wide{max-width:960px}
+  main{padding-bottom:6rem}
+
+  /* ------- Header / title block ------- */
+  header.paper-head{
+    border-bottom:1px solid var(--hairline);
+    background:linear-gradient(180deg,var(--wash),transparent);
+  }
+  .head-inner{padding:clamp(3rem,7vw,5.5rem) 24px clamp(2.2rem,4vw,3rem)}
+  .eyebrow{
+    font-family:"Segoe UI",-apple-system,system-ui,sans-serif;
+    font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);display:flex;align-items:center;gap:.6em;margin-bottom:1.4rem;font-weight:600;
+  }
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--accent);display:inline-block;border-radius:2px}
+  h1{
+    font-size:clamp(2.4rem,6vw,3.5rem);
+    line-height:1.04;margin:0 0 .5rem;font-weight:600;letter-spacing:-.015em;
+    text-wrap:balance;color:var(--ink);
+  }
+  .subtitle{
+    font-size:clamp(1.15rem,2.6vw,1.45rem);
+    color:var(--ink-soft);font-style:italic;margin:0 0 1.8rem;max-width:40ch;line-height:1.35;
+  }
+  .byline{
+    font-family:"Segoe UI",-apple-system,system-ui,sans-serif;
+    font-size:.82rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.35em 1.4em;
+    padding-top:1.3rem;border-top:1px solid var(--hairline);letter-spacing:.01em;
+  }
+  .byline b{color:var(--ink-soft);font-weight:600}
+
+  @media (prefers-reduced-motion:no-preference){
+    .rise{opacity:0;transform:translateY(14px);animation:rise .7s cubic-bezier(.2,.6,.2,1) forwards}
+    .rise.d1{animation-delay:.06s}.rise.d2{animation-delay:.13s}.rise.d3{animation-delay:.2s}.rise.d4{animation-delay:.27s}
+    @keyframes rise{to{opacity:1;transform:none}}
+  }
+
+  /* ------- Abstract ------- */
+  .abstract{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:12px;
+    padding:1.7rem 1.8rem;margin:2.4rem 0 0;box-shadow:var(--shadow);
+  }
+  .abstract .lead{margin:0}
+  .abstract .lbl{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;display:block;margin-bottom:.6rem;
+  }
+
+  /* ------- Table of contents ------- */
+  nav.toc{margin:2.4rem 0 1rem}
+  nav.toc .lbl{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;margin-bottom:.7rem;
+  }
+  nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:.15rem;counter-reset:toc}
+  nav.toc li{counter-increment:toc}
+  nav.toc a{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.95rem;color:var(--ink-soft);
+    text-decoration:none;display:flex;align-items:baseline;gap:.8em;padding:.4rem .6rem;border-radius:7px;
+  }
+  nav.toc a::before{
+    content:counter(toc,decimal-leading-zero);color:var(--accent);font-size:.78rem;font-weight:700;
+    font-variant-numeric:tabular-nums;min-width:1.6em;
+  }
+  nav.toc a:hover{background:var(--wash);color:var(--ink)}
+
+  /* ------- Sections ------- */
+  section{scroll-margin-top:1.5rem;padding-top:2.4rem}
+  h2{
+    font-size:clamp(1.55rem,3.4vw,2.05rem);line-height:1.12;margin:0 0 .3rem;font-weight:600;
+    letter-spacing:-.01em;text-wrap:balance;display:flex;align-items:baseline;gap:.6em;
+  }
+  h2 .num{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.85rem;font-weight:700;color:var(--accent);
+    font-variant-numeric:tabular-nums;letter-spacing:.05em;transform:translateY(-.1em);
+  }
+  h3{
+    font-size:1.16rem;margin:2.1rem 0 .2rem;font-weight:600;color:var(--ink);letter-spacing:-.005em;
+    font-family:"Segoe UI",system-ui,sans-serif;
+  }
+  .kicker{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;margin:.2rem 0 1.4rem;
+  }
+  p{margin:0 0 1.1em}
+  section p, section li{color:var(--ink-soft)}
+  a{color:var(--accent);text-underline-offset:2px;text-decoration-thickness:1px}
+  strong{color:var(--ink);font-weight:600}
+  ul,ol{margin:0 0 1.2em;padding-left:1.3em}
+  li{margin:.3em 0}
+  hr.rule{border:0;height:1px;background:var(--hairline);margin:3rem 0 0}
+
+  /* ------- Pull quote ------- */
+  blockquote{
+    margin:1.8rem 0;padding:.2rem 0 .2rem 1.4rem;border-left:3px solid var(--accent);
+    font-size:1.3rem;line-height:1.4;font-style:italic;color:var(--ink);
+  }
+  blockquote cite{
+    display:block;margin-top:.6rem;font-size:.82rem;font-style:normal;color:var(--muted);
+    font-family:"Segoe UI",system-ui,sans-serif;letter-spacing:.02em;
+  }
+  blockquote cite::before{content:"— "}
+
+  /* ------- Callout / definitions ------- */
+  .callout{
+    background:var(--surface);border:1px solid var(--hairline);border-left:3px solid var(--accent);
+    border-radius:0 10px 10px 0;padding:1.1rem 1.3rem;margin:1.6rem 0;box-shadow:var(--shadow);
+  }
+  .callout .h{
+    font-family:"Segoe UI",system-ui,sans-serif;font-weight:700;font-size:.78rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--accent);margin-bottom:.4rem;
+  }
+  .callout.warn{border-left-color:var(--amber)}
+  .callout.warn .h{color:var(--amber)}
+  .callout.teal{border-left-color:var(--teal)}
+  .callout.teal .h{color:var(--teal)}
+  .callout p:last-child{margin-bottom:0}
+
+  /* ------- Code ------- */
+  pre{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:10px;
+    padding:1rem 1.2rem;overflow-x:auto;margin:1.4rem 0;box-shadow:var(--shadow);
+  }
+  pre code{font-family:"Cascadia Code","SF Mono",Consolas,monospace;font-size:.86rem;line-height:1.6;color:var(--ink)}
+  code:not(pre code){
+    font-family:"Cascadia Code","SF Mono",Consolas,monospace;font-size:.85em;
+    background:var(--surface-2);padding:.1em .4em;border-radius:5px;color:var(--ink);
+  }
+  .tok-k{color:var(--accent);font-weight:600}
+  .tok-s{color:var(--amber)}
+  .tok-c{color:var(--muted);font-style:italic}
+
+  /* ------- Diagram ------- */
+  figure{margin:1.8rem 0}
+  figure.diagram{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:14px;padding:1.6rem 1.4rem 1.3rem;
+    box-shadow:var(--shadow);
+  }
+  .flowlabel{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:700;color:var(--muted);margin-bottom:.7rem;display:flex;align-items:center;gap:.6em;
+  }
+  .flowlabel.after{color:var(--teal)}
+  .flow{display:flex;align-items:stretch;gap:.5rem;overflow-x:auto;padding-bottom:.4rem}
+  .flow + .flowlabel{margin-top:1.5rem}
+  .node{
+    font-family:"Segoe UI",system-ui,sans-serif;font-size:.8rem;font-weight:600;color:var(--ink);
+    background:var(--surface-2);border:1px solid var(--hairline-strong);border-radius:9px;
+    padding:.55rem .7rem;white-space:nowrap;display:flex;align-items:center;text-align:center;line-height:1.2;
+  }
+  .node.db{background:var(--wash-strong);border-color:var(--accent);color:var(--ink)}
+  .node.server{background:rgba(154,90,30,.10);border-color:var(--amber);color:var(--ink)}
+  .node.p2p{border:2px solid var(--teal);color:var(--teal);font-weight:700;background:transparent}
+  .node.wall{
+    background:transparent;border:2px dashed var(--accent);color:var(--accent);font-weight:700;letter-spacing:.02em;
+  }
+  .node.ghost{opacity:.55}
+  .node small{display:block;font-weight:400;color:var(--muted);font-size:.68rem;letter-spacing:.02em}
+  .arrow{display:flex;align-items:center;color:var(--faint);font-size:1rem;flex:none}
+  .arrow.p2p{color:var(--teal);font-weight:700}
+  .flowcap{
+    text-align:center;font-style:italic;color:var(--muted);font-size:.92rem;margin-top:1.2rem;
+    padding-top:1rem;border-top:1px dashed var(--hairline-strong);
+  }
+  figcaption{font-family:"Segoe UI",system-ui,sans-serif;font-size:.8rem;color:var(--muted);margin-top:.7rem;text-align:center}
+
+  /* ------- Generic data tables ------- */
+  .tablecard{
+    margin:1.6rem 0;border:1px solid var(--hairline);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);
+    background:var(--surface);
+  }
+  .tscroll{overflow-x:auto}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:.9rem}
+  .resp table{min-width:560px}
+  th,td{
+    font-family:"Segoe UI",system-ui,sans-serif;text-align:left;padding:.7rem .9rem;
+    border-bottom:1px solid var(--hairline);vertical-align:top;
+  }
+  thead th{
+    font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;
+    background:var(--surface-2);position:sticky;top:0;
+  }
+  tbody th{font-weight:600;color:var(--ink)}
+  tbody tr:last-child th,tbody tr:last-child td{border-bottom:0}
+  td.num,th.num{font-variant-numeric:tabular-nums;font-family:"Cascadia Code",Consolas,monospace;font-size:.82rem}
+  .t-snap{color:var(--muted)}
+  .t-fly{color:var(--ink)}
+
+  /* ------- Matrix ------- */
+  .matrix table{min-width:560px;font-size:.86rem}
+  .matrix thead th{text-align:center;white-space:nowrap}
+  .matrix thead th:first-child{text-align:left}
+  .matrix tbody th{
+    position:sticky;left:0;background:var(--surface);z-index:2;min-width:170px;
+    box-shadow:1px 0 0 var(--hairline);
+  }
+  .matrix td{text-align:center;color:var(--ink-soft);white-space:nowrap}
+  .matrix tbody tr:nth-child(even) th,.matrix tbody tr:nth-child(even) td{background:var(--surface-2)}
+  .matrix tbody tr:hover th,.matrix tbody tr:hover td{background:var(--wash)}
+  .d{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px}
+  .d.f{background:var(--accent);border:1px solid var(--accent)}
+  .d.p{border:1.5px solid var(--amber);background:linear-gradient(90deg,var(--amber) 50%,transparent 50%)}
+  .d.n{border:1.5px solid var(--dot-none-bd);background:transparent}
+  .legend{
+    display:flex;flex-wrap:wrap;gap:1.1rem;padding:.85rem 1rem;font-family:"Segoe UI",system-ui,sans-serif;
+    font-size:.78rem;color:var(--muted);border-bottom:1px solid var(--hairline);background:var(--surface-2);
+  }
+  .legend span{display:inline-flex;align-items:center;gap:.45em}
+
+  /* ------- Pros / cons ------- */
+  .verdict{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.6rem 0}
+  @media (max-width:620px){.verdict{grid-template-columns:1fr}}
+  .col{background:var(--surface);border:1px solid var(--hairline);border-radius:12px;padding:1.2rem 1.3rem;box-shadow:var(--shadow)}
+  .col h3{margin:0 0 .8rem;font-size:.82rem;letter-spacing:.1em;text-transform:uppercase}
+  .col.pro h3{color:var(--accent)}
+  .col.con h3{color:var(--amber)}
+  .col ul{list-style:none;margin:0;padding:0}
+  .col li{position:relative;padding-left:1.5em;font-size:.92rem;margin:.55em 0;color:var(--ink-soft)}
+  .col li b{color:var(--ink)}
+  .col.pro li::before{content:"";position:absolute;left:0;top:.55em;width:9px;height:9px;border-radius:50%;background:var(--accent)}
+  .col.con li::before{content:"";position:absolute;left:.1em;top:.55em;width:9px;height:2px;background:var(--amber);border-radius:2px}
+
+  /* ------- Footnote / references ------- */
+  .refs{margin-top:1rem}
+  .refs ol{padding-left:1.4em}
+  .refs li{font-family:"Segoe UI",system-ui,sans-serif;font-size:.85rem;color:var(--muted);margin:.5em 0}
+  footer{border-top:1px solid var(--hairline);margin-top:3rem;padding-top:1.6rem;color:var(--muted)}
+  footer p{font-family:"Segoe UI",system-ui,sans-serif;font-size:.82rem;color:var(--muted)}
+
+  ::selection{background:var(--wash-strong)}
+  a:focus-visible,nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+</style>
+</head>
+<body>
+<header class="paper-head">
+  <div class="head-inner wrap">
+    <div class="eyebrow sans rise">Architecture Review &middot; Peer-to-Peer Ephemeral Messaging</div>
+    <h1 class="rise d1">Snaps Without a Server</h1>
+    <p class="subtitle rise d2">How <span class="mono">mayfly</span> 🐛 rebuilds the disappearing photo with no server in the middle of your media &mdash; and why taking the server out is what finally makes &ldquo;ephemeral&rdquo; mean it.</p>
+    <div class="byline sans rise d3">
+      <span><b>Topic</b> &nbsp;Serverless, peer-to-peer messaging</span>
+      <span><b>Compared</b> &nbsp;mayfly vs. Snapchat infrastructure</span>
+      <span><b>Companion to</b> &nbsp;<a href="https://jay23606.github.io/peek/arch.html">The Zero-Server Stack</a></span>
+      <span><b>Revised</b> &nbsp;July 2026</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="abstract rise d4">
+    <span class="lbl sans">Abstract</span>
+    <p class="lead">Snapchat made the disappearing photo famous, but the photo does not vanish where you might imagine. It is uploaded to Snapchat&rsquo;s servers, stored there (encrypted, but with keys the company holds &mdash; not end-to-end), delivered, and only <em>then</em> deleted; an unopened snap lingers for weeks and can be handed to law enforcement. <strong>mayfly</strong> is a small open-source app that keeps the same feel &mdash; snaps, stories, chat, group chats, video calls &mdash; while removing the one thing Snapchat is built around: <em>a server in the middle of your media</em>. It is a &ldquo;zero-server stack&rdquo; (static files on GitHub Pages plus a managed Supabase database) with a peer-to-peer twist: full-resolution photos and videos never touch a server at all. They stream browser-to-browser over WebRTC, or, when a friend is offline, are end-to-end encrypted so the server holds only ciphertext it cannot read. This paper explains both designs in plain English, walks a single snap through each, and weighs the trade honestly. The short version: moving the media off the server makes &ldquo;ephemeral&rdquo; a property of the <em>architecture</em> rather than a promise, and collapses the cost of running the thing from something like a billion dollars a year to roughly zero &mdash; but it gives up exactly what a server-in-the-middle buys: guaranteed offline delivery, works-on-any-network reliability, and the content safety that operating at planetary scale demands.</p>
+  </div>
+
+  <nav class="toc">
+    <div class="lbl sans">Contents</div>
+    <ol>
+      <li><a href="#two">Two ways to make a photo disappear</a></li>
+      <li><a href="#snap">How Snapchat is built: the server in the middle</a></li>
+      <li><a href="#fly">How mayfly is built: no server in the middle</a></li>
+      <li><a href="#crux">The one decision that changes everything</a></li>
+      <li><a href="#walk">Sending a snap, step by step</a></li>
+      <li><a href="#ephemeral">Does &ldquo;ephemeral&rdquo; actually mean it?</a></li>
+      <li><a href="#cost">What it costs to run</a></li>
+      <li><a href="#better">Where mayfly&rsquo;s model is genuinely better</a></li>
+      <li><a href="#server">Where the server earns its keep</a></li>
+      <li><a href="#conclusion">Conclusion</a></li>
+    </ol>
+  </nav>
+
+  <hr class="rule">
+
+  <!-- 1 -->
+  <section id="two">
+    <h2><span class="num sans">01</span>Two ways to make a photo disappear</h2>
+    <p class="kicker sans">Same product, opposite defaults</p>
+    <p>A disappearing photo sounds simple: you take a picture, a friend sees it once, and then it&rsquo;s gone. The hard question is a quiet one hiding inside that sentence &mdash; <strong>gone from where?</strong> A photo that a friend can see has to travel from your phone to theirs, and the whole character of the app depends on the route it takes.</p>
+    <p>There are really only two routes. In the first, the photo goes <em>up</em> to a company&rsquo;s servers, waits there until your friend fetches it, and is deleted afterward. In the second, the photo goes <em>across</em> &mdash; straight from your device to your friend&rsquo;s &mdash; and never lands on a server at all. Snapchat took the first route. mayfly takes the second. Everything else &mdash; the cost, the privacy, how honestly &ldquo;ephemeral&rdquo; the app can claim to be, and how reliably it works &mdash; follows from that single fork in the road.</p>
+    <blockquote>The interesting question isn&rsquo;t whether the photo disappears. It&rsquo;s whether it was ever somewhere it had to disappear <em>from</em>.</blockquote>
+  </section>
+
+  <!-- 2 -->
+  <section id="snap">
+    <h2><span class="num sans">02</span>How Snapchat is built: the server in the middle</h2>
+    <p class="kicker sans">Store, forward, then delete</p>
+    <p>Snapchat is, underneath the playful surface, a very large and fairly conventional cloud application. When you send a snap, your phone encrypts it for the trip (ordinary transport encryption, the same padlock your browser uses for a bank) and uploads it to Snapchat&rsquo;s servers. There it is stored &mdash; encrypted at rest, but with keys the company controls &mdash; until your friend&rsquo;s app downloads it. Once they&rsquo;ve opened it, the server deletes it. If they never open it, it is kept for a defined window &mdash; historically around thirty days &mdash; and then deleted automatically.</p>
+    <p>That store-and-forward core is wrapped in a great deal of additional machinery. Stories and the public Discover and Spotlight feeds are pushed out through content-delivery networks so that popular content can reach millions of viewers quickly. Augmented-reality Lenses, the friend map, search, and recommendation all lean on server-side computation and machine learning. And crucially, a large Trust &amp; Safety operation &mdash; automated scanning for illegal material, human moderators, abuse reporting &mdash; runs on the servers precisely <em>because</em> the servers can see the content passing through.</p>
+    <p>The scale is hard to overstate. Snapchat serves, by public reports, well over 400 million people every day, who send on the order of billions of snaps in that same day. The infrastructure to move and store that lives on rented cloud &mdash; Snap has committed billions of dollars across multi-year deals with Google Cloud and Amazon Web Services &mdash; and is tended by a large engineering and site-reliability organization whose job is to keep it fast, available, and safe around the clock.</p>
+
+    <figure class="diagram">
+      <div class="flowlabel sans">Snapchat &middot; the media rides through the server</div>
+      <div class="flow">
+        <div class="node">Your phone<small>captures snap</small></div>
+        <div class="arrow" aria-hidden="true">&rarr;</div>
+        <div class="node server">Snapchat servers<small>store encrypted, hold the keys</small></div>
+        <div class="arrow" aria-hidden="true">&rarr;</div>
+        <div class="node">Friend&rsquo;s phone<small>downloads &amp; views</small></div>
+      </div>
+      <div class="flowcap">The full photo is uploaded, stored, and forwarded. &ldquo;Ephemeral&rdquo; is a deletion <em>policy</em> the server carries out.</div>
+    </figure>
+
+    <p>None of this is an accident or a flaw; it is what makes Snapchat <em>Snapchat</em>. A server that holds every snap can deliver it whenever the recipient next opens the app, whether that&rsquo;s in one second or one week, over Wi-Fi or a weak cellular signal. A server that can see the content can keep the platform safe. A global CDN can make a viral story instant for everyone. The server in the middle is not just overhead &mdash; it is the source of reach, reliability, and safety. It is also, as we&rsquo;ll see, the source of the cost and the privacy caveats.</p>
+  </section>
+
+  <!-- 3 -->
+  <section id="fly">
+    <h2><span class="num sans">03</span>How mayfly is built: no server in the middle</h2>
+    <p class="kicker sans">A static page, a managed database, and a wall &mdash; plus a peer-to-peer twist</p>
+    <p>mayfly starts from the <strong>zero-server stack</strong> described in this paper&rsquo;s <a href="https://jay23606.github.io/peek/arch.html">companion document</a>: the entire front end is a set of static files (one <code>index.html</code> and a handful of plain JavaScript modules, installable as a phone app) served free by GitHub Pages, talking to a single managed <strong>Supabase</strong> project that provides the database, accounts, real-time updates, and file storage. There is no application server to run and &mdash; because the app holds no secret key of its own &mdash; not even a small &ldquo;edge function.&rdquo; Access control is enforced entirely inside the database by <strong>row-level security</strong>: rules attached to each table that decide, on every request, which rows a given user may see or change.</p>
+    <p>Then comes the twist that this paper is really about. The stock zero-server pattern would drop your photos into the backend&rsquo;s file storage. <strong>mayfly refuses to put the full photo on the server at all.</strong> When you capture a snap, the full-resolution image stays in your own browser (in its local IndexedDB store). Only a <em>tiny</em> blurred thumbnail &mdash; a preview a few dozen pixels wide, small enough to be a short line of text &mdash; is written to the database, along with metadata like who it&rsquo;s for and when it was sent. When your friend opens the snap and you are both online, the full image streams <strong>directly from your browser to theirs</strong> over a WebRTC data channel. Even the connection handshake for that direct link is carried over Supabase&rsquo;s real-time channels, so <em>no server ever sits in the media path</em>.</p>
+
+    <figure class="diagram">
+      <div class="flowlabel after sans">mayfly &middot; the media goes across, not through</div>
+      <div class="flow">
+        <div class="node p2p">Your browser<small>holds the full photo</small></div>
+        <div class="arrow p2p" aria-hidden="true">&rarr;</div>
+        <div class="node p2p">Friend&rsquo;s browser<small>pulls it peer-to-peer</small></div>
+        <div class="arrow" aria-hidden="true">&nbsp;</div>
+        <div class="node db">Supabase<small>only preview + signaling</small></div>
+      </div>
+      <div class="flowcap">The full image streams device-to-device. The database carries a blurred thumbnail and helps the two browsers find each other &mdash; nothing more.</div>
+    </figure>
+
+    <p>What about the very common case where your friend is <em>not</em> online right now? mayfly can&rsquo;t stream to a device that isn&rsquo;t there, so it falls back to a carefully limited relay: it <strong>encrypts the image to your friend&rsquo;s public key</strong> (an ephemeral Diffie-Hellman handshake over the P-256 curve, producing an AES-GCM key) and parks the resulting <em>ciphertext</em> in Supabase Storage. The server stores bytes it has no way to read; your friend&rsquo;s device downloads and decrypts them locally when they next open the app; and the row is hard-deleted the instant it&rsquo;s viewed. To keep even this ciphertext footprint tiny, mayfly allows only <em>one</em> unopened relay snap per recipient at a time.</p>
+    <p>The rest of the app follows the same instinct. Text chat is asynchronous and end-to-end encrypted, and each message row is deleted the moment the recipient&rsquo;s device picks it up. Stories are visible for 24 hours, but again only the blurred preview lives on the server &mdash; the full story streams peer-to-peer. Voice notes, file transfers, and one-to-one and group video calls are all live peer-to-peer connections. Group chats are ephemeral: text rides a real-time broadcast channel that stores nothing, and a group video call is a full peer-to-peer mesh where every member connects directly to every other. Across the whole app, the only things that ever rest on the server are <strong>text, metadata, and thumbnails</strong>.</p>
+
+    <p>Because the wall is the <em>entire</em> security model, it is worth seeing how little code it takes. The rule that governs deleting a snap &mdash; the mechanism behind &ldquo;it&rsquo;s gone when you open it&rdquo; &mdash; is a few lines living in the database itself:</p>
+    <pre><code><span class="tok-c">-- either party may delete the snap row; the recipient's app fires this on view</span>
+<span class="tok-k">create policy</span> <span class="tok-s">"mf_snaps_delete"</span> <span class="tok-k">on</span> public.mf_snaps <span class="tok-k">for</span> delete
+  <span class="tok-k">using</span> ( auth.uid() = sender_id <span class="tok-k">or</span> auth.uid() = recipient_id );</code></pre>
+    <p>The browser may send whatever query it likes; the wall returns or permits only what the viewer is entitled to. There is no application server behind it doing a second check &mdash; the database <em>is</em> the check.</p>
+  </section>
+
+  <!-- 4 -->
+  <section id="crux">
+    <h2><span class="num sans">04</span>The one decision that changes everything</h2>
+    <p class="kicker sans">Where does the media live?</p>
+    <p>Strip both systems down and they differ in a single design choice: <strong>where the full photo lives while it waits to be seen.</strong> Snapchat says: on our servers, briefly. mayfly says: on the two phones, or &mdash; if it must wait &mdash; only as ciphertext we can&rsquo;t open. Almost every other difference between the two apps is a downstream consequence of that one answer.</p>
+
+    <div class="tablecard resp">
+      <div class="tscroll">
+        <table>
+          <thead>
+            <tr><th>Dimension</th><th>Snapchat</th><th>mayfly</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Where the full media waits</th><td class="t-snap">On the company&rsquo;s servers, encrypted at rest</td><td class="t-fly">On the endpoints (P2P), or as ciphertext the server can&rsquo;t read</td></tr>
+            <tr><th scope="row">Who can read the content</th><td class="t-snap">The provider holds the keys (not end-to-end)</td><td class="t-fly">Only the two devices (end-to-end / peer-to-peer)</td></tr>
+            <tr><th scope="row">What &ldquo;ephemeral&rdquo; rests on</th><td class="t-snap">A deletion <em>policy</em> the server enforces</td><td class="t-fly">The <em>architecture</em> &mdash; the media was never stored</td></tr>
+            <tr><th scope="row">The server&rsquo;s role</th><td class="t-snap">Store-and-forward hub for all media</td><td class="t-fly">Address book + matchmaker (signaling, previews, presence)</td></tr>
+            <tr><th scope="row">Cost driver</th><td class="t-snap">Bandwidth &amp; storage for every byte of media</td><td class="t-fly">≈ zero &mdash; peers move their own bytes</td></tr>
+            <tr><th scope="row">Offline delivery</th><td class="t-snap">Always &mdash; the server holds it until you fetch</td><td class="t-fly">Only via a capped, encrypted relay; live snaps need both online</td></tr>
+            <tr><th scope="row">Content moderation</th><td class="t-snap">Possible &amp; extensive (the server sees content)</td><td class="t-fly">Impossible by design (the server never sees content)</td></tr>
+            <tr><th scope="row">Team &amp; ops to run it</th><td class="t-snap">Thousands of engineers, 24/7 SRE, rented cloud</td><td class="t-fly">A hobby project on a free tier, no ops</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p>Read the table as a single lever with two ends. Push it toward the server and you gain reach, reliability, and safety, and you pay for them in money and in the fact that your &ldquo;disappearing&rdquo; content is, for a while, sitting on someone else&rsquo;s computer. Push it toward the peers and you gain privacy, near-zero cost, and an ephemerality you don&rsquo;t have to take on faith &mdash; and you pay for <em>those</em> in reliability and safety. There is no free lunch here; there is a genuinely different set of things to value.</p>
+  </section>
+
+  <!-- 5 -->
+  <section id="walk">
+    <h2><span class="num sans">05</span>Sending a snap, step by step</h2>
+    <p class="kicker sans">The same gesture, two very different journeys</p>
+    <p>Nothing makes the difference concrete like following one photo from the shutter tap to the moment it disappears.</p>
+
+    <h3>On Snapchat</h3>
+    <ol>
+      <li>You tap the shutter; the app encrypts the image for transit.</li>
+      <li>It <strong>uploads the full image to Snapchat&rsquo;s servers</strong>, which store it encrypted at rest.</li>
+      <li>Your friend&rsquo;s app is notified that a snap is waiting.</li>
+      <li>Whenever they next open the app &mdash; seconds or days later, on any network &mdash; their device <strong>downloads the full image</strong> and decrypts it.</li>
+      <li>They view it; the app tells the server, which <strong>deletes the stored copy</strong>.</li>
+      <li>If they never open it, the server keeps it for a defined window (historically ~30 days), then deletes it on a timer.</li>
+    </ol>
+
+    <h3>On mayfly, when your friend is online</h3>
+    <ol>
+      <li>You tap the shutter; the full image is <strong>held in your own browser</strong> (IndexedDB). Nothing full-size leaves your device yet.</li>
+      <li>The app writes a small row to the database: a blurred thumbnail, who it&rsquo;s for, and a &ldquo;live&rdquo; marker &mdash; all guarded by the wall.</li>
+      <li>Your friend&rsquo;s app hears about the row over Supabase&rsquo;s real-time channel and shows a &ldquo;New Snap&rdquo; card.</li>
+      <li>They tap to open. Their browser opens a <strong>direct WebRTC connection to yours</strong> (the handshake is brokered over the real-time channel) and <strong>pulls the full image straight from your device</strong>. No server touches the pixels.</li>
+      <li>They watch it once; the row is <strong>hard-deleted</strong>, and your browser drops its local copy.</li>
+    </ol>
+
+    <h3>On mayfly, when your friend is offline</h3>
+    <ol>
+      <li>There is no device to stream to, so the app <strong>encrypts the image to your friend&rsquo;s public key</strong> and uploads only the resulting <em>ciphertext</em> to Supabase Storage &mdash; bytes the server cannot decrypt.</li>
+      <li>A row with the thumbnail marks it as a waiting &ldquo;relay&rdquo; snap (and mayfly permits only one unopened relay per recipient).</li>
+      <li>Next time your friend opens the app, their device downloads the ciphertext and <strong>decrypts it locally</strong> with their private key, which never left their phone.</li>
+      <li>They view it; the row and the encrypted blob are <strong>deleted</strong>.</li>
+    </ol>
+
+    <div class="callout teal">
+      <div class="h sans">The tell</div>
+      <p>Notice step 2 in each mayfly path. When the recipient is online, the server never receives the photo. When they&rsquo;re offline, it receives only an <em>encrypted</em> photo it can&rsquo;t read. There is no version of the story where mayfly&rsquo;s server holds a viewable copy of your image &mdash; which is exactly the version that always exists, however briefly, on Snapchat.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section id="ephemeral">
+    <h2><span class="num sans">06</span>Does &ldquo;ephemeral&rdquo; actually mean it?</h2>
+    <p class="kicker sans">A promise versus a property</p>
+    <p>&ldquo;It disappears&rdquo; is the whole pitch, so it deserves scrutiny. On Snapchat, disappearance is a <strong>promise</strong>: the company&rsquo;s systems are configured to delete opened snaps and to age out unopened ones. That promise is mostly kept &mdash; but it is a policy, not a law of physics, and policies have exceptions. Because the media rests on Snapchat&rsquo;s servers and Snapchat holds the keys, unopened snaps genuinely exist there for a while, and the company has, when legally compelled, retrieved and handed unopened snaps to law enforcement. Metadata &mdash; who sent what to whom, and when &mdash; is retained longer than the content. Snapchat&rsquo;s snaps are <em>not</em> end-to-end encrypted, which is precisely what makes all of the above possible.</p>
+    <p>On mayfly, disappearance is closer to a <strong>property of the design</strong>. The full media is either never on the server (peer-to-peer) or only there as ciphertext the server can&rsquo;t open (the offline relay), and in both cases the record is deleted on view. If mayfly&rsquo;s database were breached tomorrow, the attacker would find blurred thumbnails and metadata &mdash; never a viewable photo. There is no unopened-snap vault to subpoena, because there is no vault.</p>
+
+    <div class="callout warn">
+      <div class="h sans">Where both apps are equally powerless</div>
+      <p>Neither architecture can stop the person you sent the snap to from screenshotting it, or from pointing a second camera at the screen. Once a human is allowed to <em>see</em> an image, they can capture it &mdash; that&rsquo;s physics, not engineering, and it is true of Snapchat and mayfly alike. And mayfly is not a privacy panacea: the same metadata and thumbnails that make the app work do sit on its server. The honest claim is narrow and real &mdash; <strong>a breach of mayfly&rsquo;s server never exposes the full media, and Snapchat&rsquo;s can.</strong></p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section id="cost">
+    <h2><span class="num sans">07</span>What it costs to run</h2>
+    <p class="kicker sans">Pay to move every byte, or make the byte move itself</p>
+    <p>The economics fall straight out of the &ldquo;where does the media live&rdquo; question. On Snapchat, every snap is a byte the company pays to <em>receive</em> (the upload) and pays again to <em>send</em> (the download) through rented infrastructure &mdash; multiplied by billions of snaps a day. Media bandwidth and storage are the dominant line items, which is why Snap&rsquo;s cloud commitments run into the billions of dollars over their multi-year terms, and why a large team exists to keep that spend efficient and the service up.</p>
+    <p>On mayfly, the heavy bytes never go through the company at all &mdash; your browser uploads the photo directly to your friend&rsquo;s browser, so the bandwidth bill is paid by the two people who were going to move that photo anyway. The database only ever carries text, thumbnails, and connection handshakes, which is light enough to sit inside Supabase&rsquo;s free tier essentially forever, no matter how many megapixels the users shoot. The marginal cost of one more snap is, to a rounding error, <strong>zero</strong>.</p>
+
+    <div class="tablecard resp">
+      <div class="tscroll">
+        <table>
+          <thead><tr><th>Line item</th><th>Snapchat-style (server in the middle)</th><th>mayfly (peers in the middle)</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Media bandwidth</th><td class="t-snap">Every snap uploaded &amp; downloaded through paid infra</td><td class="t-fly">Device-to-device &mdash; not on the company&rsquo;s bill</td></tr>
+            <tr><th scope="row">Media storage</th><td class="t-snap">Petabytes of transient encrypted media</td><td class="t-fly">Thumbnails only; brief ciphertext for offline relays</td></tr>
+            <tr><th scope="row">Front-end hosting</th><td class="t-snap">Global CDN fleet</td><td class="t-fly">$0 &middot; GitHub Pages</td></tr>
+            <tr><th scope="row">Database / real-time</th><td class="t-snap">Large managed clusters</td><td class="t-fly">$0&ndash;25 &middot; one Supabase project</td></tr>
+            <tr><th scope="row">People to run it</th><td class="t-snap">Thousands of engineers &amp; 24/7 SRE</td><td class="t-fly">A side project &mdash; no ops rotation</td></tr>
+            <tr><th scope="row"><b>Order of magnitude</b></th><td class="t-snap"><b>~$1&nbsp;billion / year in cloud</b></td><td class="t-fly"><b>~$0 / month</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="sans" style="font-size:.82rem;color:var(--muted)">Figures are order-of-magnitude and drawn from public reporting, not audited accounts; they are meant to show the <em>gap</em>, not a precise bill.</p>
+  </section>
+
+  <!-- 8 -->
+  <section id="better">
+    <h2><span class="num sans">08</span>Where mayfly&rsquo;s model is genuinely better</h2>
+    <p class="kicker sans">Not just cheaper &mdash; arguably more honest</p>
+    <p>It would be easy to file mayfly under &ldquo;clever hack that can&rsquo;t scale.&rdquo; That undersells it. For the specific job of <em>private, ephemeral sharing between people who know each other</em>, taking the server out of the media path isn&rsquo;t merely a cost trick &mdash; it produces a design that is, on several axes, closer to what the product always claimed to be.</p>
+    <ul>
+      <li><strong>Privacy by construction, not by policy.</strong> The strongest privacy guarantee is the one you don&rsquo;t have to trust anyone to keep. mayfly can&rsquo;t leak your photos in a breach because it never has them. &ldquo;We can&rsquo;t see it&rdquo; is a stronger statement than &ldquo;we promise not to look.&rdquo;</li>
+      <li><strong>Ephemerality that means it.</strong> When the media was never stored, &ldquo;it&rsquo;s gone&rdquo; stops being a deletion job that could fail, be misconfigured, or be legally overridden, and becomes a simple fact about where the bytes were.</li>
+      <li><strong>Cost that scales with the users&rsquo; own devices.</strong> The thing that normally makes a media app expensive &mdash; more users sending more media &mdash; adds almost nothing to mayfly&rsquo;s bill, because each new pair of friends brings its own bandwidth.</li>
+      <li><strong>A tiny, auditable system.</strong> The entire backend is a database schema you can read in one sitting; the security model is one file of rules. There is far less that can go wrong, and far less that can hide.</li>
+      <li><strong>Open and self-hostable.</strong> The whole stack is open source and can run on your own machine. If the hosted pieces disappoint, you are not trapped.</li>
+    </ul>
+    <p>The clarifying way to put it: Snapchat had to build an enormous, expensive machine to make photos <em>feel</em> like they disappear. mayfly gets a stronger version of the same feeling by <em>not building the machine</em> &mdash; by refusing, at the architectural level, to be a place your photos are ever kept.</p>
+  </section>
+
+  <!-- 9 -->
+  <section id="server">
+    <h2><span class="num sans">09</span>Where the server earns its keep</h2>
+    <p class="kicker sans">The honest ledger &mdash; the things you give up</p>
+    <p>A fair paper has to spend as much care on the losses as on the wins, and mayfly&rsquo;s losses are not small. The server-in-the-middle that costs Snapchat a fortune was also <em>buying</em> real things, and mayfly gives every one of them up on purpose.</p>
+
+    <div class="verdict">
+      <div class="col pro">
+        <h3>What the peer model wins</h3>
+        <ul>
+          <li><b>Privacy &amp; ephemerality</b> as structural facts, not promises</li>
+          <li><b>Near-zero cost</b> that doesn&rsquo;t grow with media volume</li>
+          <li><b>No breach surface</b> for the content itself</li>
+          <li><b>No operations burden;</b> a one- or two-person project can run it</li>
+          <li><b>Open source,</b> self-hostable, tiny and auditable</li>
+        </ul>
+      </div>
+      <div class="col con">
+        <h3>What the peer model gives up</h3>
+        <ul>
+          <li><b>Reliable offline delivery.</b> Live snaps need both people online; offline falls back to a deliberately capped encrypted relay</li>
+          <li><b>Works-on-any-network.</b> Direct connections need NAT traversal; with only public STUN and no TURN relay, they often fail on cellular data</li>
+          <li><b>Content safety at scale.</b> A server that can&rsquo;t see content can&rsquo;t scan for illegal material or moderate abuse &mdash; the very privacy win removes a serious protection</li>
+          <li><b>Push when the app is closed,</b> rich server features (AR lenses, Discover, Maps, ML), and CDN fan-out for viral content</li>
+          <li><b>Durable history</b> &mdash; ephemeral by design means nothing to back up or recover</li>
+        </ul>
+      </div>
+    </div>
+
+    <p>Two of these deserve a closer look, because they are where the trade bites hardest.</p>
+    <p>The first is <strong>reach across bad networks</strong>. Two browsers can only talk directly if they can find a path through the routers and firewalls between them, and on mobile carrier networks that path is frequently blocked. The standard fix is a <em>TURN relay</em> &mdash; a small server that bounces the traffic when a direct link fails. mayfly currently ships without one, which is why its peer features can be flaky on cellular data. That&rsquo;s telling: the single most valuable thing mayfly could add is a small, boring server &mdash; which doesn&rsquo;t refute the architecture so much as mark its honest edge.</p>
+    <p>The second is <strong>safety</strong>, and it is not a minor engineering caveat but a genuine ethical fork. At Snapchat&rsquo;s scale, the ability of the server to see content is what powers automated detection of child-exploitation material, abuse reporting, and moderation &mdash; obligations that are legal as well as moral. mayfly&rsquo;s privacy guarantee is the <em>same property</em> that makes all of that impossible. For a small app among friends that trade may be perfectly reasonable; for a platform serving hundreds of millions of strangers, it would not be. This is the clearest case of the general rule: the server in the middle is a cost, but it is also a responsibility that scale makes unavoidable.</p>
+
+    <h3>Scoring the trade</h3>
+    <p>No single winner &mdash; a different profile for a different job.</p>
+    <div class="tablecard matrix">
+      <div class="legend sans">
+        <span><span class="d f"></span> Strong</span>
+        <span><span class="d p"></span> Partial / conditional</span>
+        <span><span class="d n"></span> Weak or absent</span>
+      </div>
+      <div class="tscroll">
+        <table>
+          <thead>
+            <tr><th scope="col">Dimension</th><th scope="col">Snapchat</th><th scope="col">mayfly</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Content privacy</th><td><span class="d p" role="img" aria-label="Partial"></span></td><td><span class="d f" role="img" aria-label="Strong"></span></td></tr>
+            <tr><th scope="row">Ephemerality guarantee</th><td><span class="d p" role="img" aria-label="Partial"></span></td><td><span class="d f" role="img" aria-label="Strong"></span></td></tr>
+            <tr><th scope="row">Cost to operate</th><td><span class="d n" role="img" aria-label="Weak"></span></td><td><span class="d f" role="img" aria-label="Strong"></span></td></tr>
+            <tr><th scope="row">Offline delivery</th><td><span class="d f" role="img" aria-label="Strong"></span></td><td><span class="d p" role="img" aria-label="Partial"></span></td></tr>
+            <tr><th scope="row">Any-network reliability</th><td><span class="d f" role="img" aria-label="Strong"></span></td><td><span class="d p" role="img" aria-label="Partial"></span></td></tr>
+            <tr><th scope="row">Content safety / moderation</th><td><span class="d f" role="img" aria-label="Strong"></span></td><td><span class="d n" role="img" aria-label="Weak"></span></td></tr>
+            <tr><th scope="row">Rich features (AR, Discover, Maps)</th><td><span class="d f" role="img" aria-label="Strong"></span></td><td><span class="d n" role="img" aria-label="Weak"></span></td></tr>
+            <tr><th scope="row">Scales to hundreds of millions</th><td><span class="d f" role="img" aria-label="Strong"></span></td><td><span class="d n" role="img" aria-label="Weak"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="conclusion">
+    <h2><span class="num sans">10</span>Conclusion</h2>
+    <p class="kicker sans">The disappearing photo didn&rsquo;t need the server in the middle</p>
+    <p>The quiet claim behind mayfly is that a disappearing-photo app does not need a company sitting in the middle of your media &mdash; and that taking it out is not a compromise but an <em>improvement</em> to the two things the product cares about most. It turns &ldquo;trust us to delete it&rdquo; into &ldquo;there was never anything to delete,&rdquo; and it turns a bandwidth bill measured in the billions into a rounding error, by letting the photo travel the short way &mdash; from one phone straight to another &mdash; instead of the long way through a data center. For private, ephemeral sharing among people who are usually online, that is not a toy version of Snapchat; it is arguably the more honest architecture.</p>
+    <p>But the server in the middle was never <em>only</em> a cost. It was also what let Snapchat deliver to a friend who&rsquo;s asleep, work on a subway with one bar of signal, reach hundreds of millions of strangers, and &mdash; most seriously &mdash; keep that vast space safe. mayfly gives those up deliberately, and the fact that the one thing it most wants back is a small relay server tells you the boundary is real. The synthesis is the same one the companion paper reaches about the zero-server stack generally: this is an <strong>excellent default for a specific shape of problem</strong> &mdash; here, private ephemeral messaging at human scale &mdash; and a poor fit for the planetary platform with its very different obligations. mayfly is the working proof that the first half of that sentence is true: you really can build the disappearing photo with no server in the middle, and for the right job, you probably should.</p>
+
+    <div class="refs">
+      <h3>Notes &amp; sources</h3>
+      <ol>
+        <li>Companion document: <em>The Zero-Server Stack</em> &mdash; <a href="https://jay23606.github.io/peek/arch.html">jay23606.github.io/peek/arch.html</a>. The zero-server pattern, &ldquo;the wall,&rdquo; and the cost framing are drawn from it.</li>
+        <li>mayfly is open source: <a href="https://github.com/jay23606/mayfly">github.com/jay23606/mayfly</a> (live at <a href="https://jay23606.github.io/mayfly/">jay23606.github.io/mayfly</a>). Architectural details &mdash; peer-to-peer media, the encrypted offline relay, row-level security, deletion-on-view &mdash; reflect the app&rsquo;s own source (<code>schema.sql</code>, <code>rtc.js</code>, <code>crypto.js</code>).</li>
+        <li>Snapchat figures &mdash; daily users, snaps per day, cloud commitments, unopened-snap retention, and the fact that snaps are not end-to-end encrypted &mdash; are from public reporting and company disclosures and are approximate and historical; providers change practices, so verify against current sources before relying on any number.</li>
+        <li>Cryptography note: mayfly&rsquo;s offline relay uses an ephemeral ECDH key agreement on the P-256 curve to derive an AES-GCM key, so the server stores only ciphertext. This protects media <em>at rest on the relay</em>; it does not attempt to defend against a recipient who chooses to capture what they were shown.</li>
+      </ol>
+    </div>
+
+    <footer>
+      <p>Prepared as an accessible architecture comparison between a peer-to-peer, zero-server ephemeral messenger (mayfly) and a conventional store-and-forward cloud platform (Snapchat). Analysis is original; the zero-server paradigm and cost framing originate in the companion document cited above.</p>
+    </footer>
+  </section>
+
+</main>
+</body>
+</html>

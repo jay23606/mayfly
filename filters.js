@@ -7,6 +7,11 @@ export const FILTERS = [
     { id: 'cool', label: 'Cool', css: 'hue-rotate(165deg) saturate(1.12) brightness(1.04)' },
     { id: 'vivid', label: 'Vivid', css: 'saturate(1.55) contrast(1.14)' },
     { id: 'noir', label: 'Noir', css: 'grayscale(1) contrast(1.45) brightness(.88)' },
+    { id: 'fade', label: 'Fade', css: 'saturate(.68) contrast(.78) brightness(1.12)' },
+    { id: 'dream', label: 'Dream', css: 'brightness(1.16) saturate(1.18) contrast(.86)' },
+    { id: 'film', label: 'Film', css: 'sepia(.12) grayscale(.18) contrast(1.22) brightness(.96)' },
+    { id: 'neon', label: 'Neon', css: 'hue-rotate(210deg) saturate(2.05) contrast(1.18)' },
+    { id: 'invert', label: 'Invert', css: 'invert(1) hue-rotate(180deg)' },
 ];
 
 export const filterCss = (id) => FILTERS.find(f => f.id === id)?.css || 'none';

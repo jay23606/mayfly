@@ -793,6 +793,8 @@ const route = () => {
 };
 const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };
 window.addEventListener('chat-unread', setChatDot);
+// tapping a friend's ringed avatar in the chat list (chat.js) plays their Story
+window.addEventListener('mf-play-story', (e) => { const items = e.detail?.items; if (items?.length) playStories([{ items, mine: false }], 0); });
 document.addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) location.hash = g.dataset.go; });
 window.addEventListener('hashchange', () => { mountChrome(); route(); });
 

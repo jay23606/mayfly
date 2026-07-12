@@ -199,9 +199,12 @@ export const hideConversation = (uid) => {
 // ===================== conversation list =====================
 export const renderConvs = async (box, activeUid) => {
     convBox = box;
-    const { data: fr } = await db.friends();
+    const [{ data: fr }, { data: activeStories }] = await Promise.all([db.friends(), db.activeStories()]);
     const friends = (fr || []).map(f => f.requester_id === state.me.id ? f.addressee : f.requester).filter(Boolean);
     if (box !== convBox) return;
+    // friends with a live Story → ring their avatar in the list; tapping it plays their Story
+    const storyByUid = new Map();
+    (activeStories || []).forEach(st => { if (st.user_id !== state.me.id) (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
     // build each conversation's summary
     const rows = (await Promise.all(friends.map(async (u) => {
         const h = await histGet(u.id);
@@ -219,9 +222,13 @@ export const renderConvs = async (box, activeUid) => {
     box.innerHTML = '';
     if (!rows.length) { box.innerHTML = `<div class="empty">No friends yet. <a href="#/friends">Add some →</a></div>`; return; }
     rows.forEach(({ u, unread, status, snaps, kind }) => {
+        const theirStory = storyByUid.get(u.id);
+        const avatar = theirStory
+            ? `<span class="storyavatar" role="button" tabindex="0" aria-label="View ${esc(u.username)}'s story">${avatarHTML(u.username, u.avatar, 'hasstory')}</span>`
+            : avatarHTML(u.username, u.avatar);
         const row = el(`<button class="conv ${u.id === activeUid ? 'active' : ''} ${unread ? 'unread' : ''} ${kind ? 'snap-' + kind : ''}" data-go="#/c/${u.id}">
             <span class="convhide" role="button" tabindex="0" aria-label="Hide conversation with ${esc(u.username)}" title="Hide conversation">×</span>
-            ${avatarHTML(u.username, u.avatar)}
+            ${avatar}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub ${unread ? 'hot' : ''}">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${esc(status)}</div></div>
             <span class="camicon" data-snap="${u.id}" aria-label="Send a snap">${icon('camera', 20)}</span></button>`);
@@ -230,6 +237,12 @@ export const renderConvs = async (box, activeUid) => {
         const doHide = (e) => { e.preventDefault(); e.stopPropagation(); hideConversation(u.id); if (openUid === u.id) location.hash = '#/chats'; };
         hide.onclick = doHide;
         hide.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') doHide(e); };
+        if (theirStory) {
+            const sa = $('.storyavatar', row);
+            const playStory = (e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new CustomEvent('mf-play-story', { detail: { items: theirStory } })); };
+            sa.onclick = playStory;
+            sa.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') playStory(e); };
+        }
         box.appendChild(row);
     });
 };

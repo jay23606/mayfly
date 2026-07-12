@@ -393,6 +393,8 @@ const wireMic = (box, uid) => {
     const start = async (e) => {
         e?.preventDefault();
         if (rec?.state === 'recording' || draft) return;
+        // Voice clips are live-only (no relay) — don't let one be recorded if it can't be sent.
+        if (!isOnline(uid)) return appendBubble('(voice clips only send while your friend is online)', 'sys');
         holding = true; mic.setPointerCapture?.(e?.pointerId);
         try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
         if (!holding) { stream.getTracks().forEach(t => t.stop()); return; }

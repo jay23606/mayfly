@@ -60,10 +60,16 @@ const db = {
     myExpiredSnaps: () => sb.from('mf_snaps').select('id, delivery').lt('expires_at', new Date().toISOString()),
 
     // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
+    // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,
+    // anything older is swept below. Keep MSG_TTL in sync with delExpiredMessages.
     sendMessage: (row) => sb.from('mf_messages').insert(row),
-    // everything sent to me that I haven't picked up yet (across all friends)
-    myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id).order('created_at'),
+    // everything sent to me in the last week that I haven't picked up yet (across all friends)
+    myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id)
+        .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()).order('created_at'),
     delMessage: (id) => sb.from('mf_messages').delete().eq('id', id),
+    // undelivered messages I'm party to that are older than a week — GC'd on boot (RLS scopes to me)
+    delExpiredMessages: () => sb.from('mf_messages').delete()
+        .lt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()),
 
     // ---- streaks (atomic bump via SECURITY DEFINER fn; canonicalizes the pair) ----
     bumpStreak: (other) => sb.rpc('mf_bump_streak', { other }),

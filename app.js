@@ -712,6 +712,7 @@ const sweepLocal = async () => {
             if (relayIds.length) { try { await sb.storage.from(SNAP_BUCKET).remove(relayIds); } catch (e) {} }
             await db.delSnaps(expired.map(r => r.id));
         }
+        await db.delExpiredMessages();   // drop undelivered chat older than a week
         const [{ data: snaps }, { data: stories }, keys] = await Promise.all([db.mySpentSnaps(), db.myStories(), idb.keys()]);
         const live = new Set([...(snaps || []).map(r => 'snap:' + r.id), ...(stories || []).map(r => 'story:' + r.id)]);
         for (const k of keys) if (typeof k === 'string' && (k.startsWith('snap:') || k.startsWith('story:')) && !live.has(k)) idb.del(k);

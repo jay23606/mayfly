@@ -4,6 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
+import { FILTERS, filterCss, drawFiltered, filterImageBlob } from './filters.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
@@ -41,6 +42,7 @@ const startPresence = () => {
 
 // ===================== camera-first capture =====================
 let stream = null, facing = 'user';
+let cameraInputCleanup = () => {};
 const stopStream = () => { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } };
 const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
@@ -63,12 +65,14 @@ const startCamera = async () => {
     }
 };
 const viewCamera = (defaultRecipientId = null, groupId = null) => {
+    cameraInputCleanup();
     stopStream();
     app.innerHTML = `<main class="camwrap">
       <div class="viewport">
         <video id="cam" autoplay playsinline muted disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>
         <div class="camerr" id="camerr"></div>
       </div>
+      <select class="filterselect" id="filter" aria-label="Photo filter">${FILTERS.map(f => `<option value="${f.id}">${f.label}</option>`).join('')}</select>
       <div class="cambar">
         <button class="cbtn ghost" id="pick" title="From gallery" aria-label="Pick from gallery">🖼️</button>
         <button class="shutter" id="shoot" aria-label="Take photo; hold to record video"></button>
@@ -77,11 +81,18 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
       </div>
     </main>`;
     const finishShot = (shot) => compose(shot, defaultRecipientId, groupId);
+    let activeFilter = 'normal';
+    const filter = $('#filter');
+    const updateFilter = () => { activeFilter = filter.value; $('#cam').style.filter = filterCss(activeFilter); };
+    filter.onchange = updateFilter;
     $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
         const f = $('#file').files[0]; if (!f) return;
-        try { finishShot(f.type.startsWith('video/') ? await processVideo(f) : await processImage(f)); }
+        try {
+            if (f.type.startsWith('video/')) finishShot(await processVideo(f));
+            else finishShot(await processImage(await filterImageBlob(f, activeFilter)));
+        }
         catch (e) { toast('Could not read that media.'); }
     };
     const shoot = $('#shoot');
@@ -91,7 +102,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
         const ctx = c.getContext('2d');
         if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
-        ctx.drawImage(v, 0, 0);
+        drawFiltered(ctx, v, activeFilter);
         try { finishShot(await processCanvas(c)); }
         catch (e) { toast('Could not prepare that photo.'); }
     };
@@ -101,7 +112,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         const c = Object.assign(document.createElement('canvas'), {
             width: Math.max(1, Math.round(v.videoWidth * scale)), height: Math.max(1, Math.round(v.videoHeight * scale)),
         });
-        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        drawFiltered(c.getContext('2d'), v, activeFilter);
         return c.toDataURL('image/jpeg', 0.5);
     };
     let holdTimer = null, recorder = null, maxRecordTimer = null, longPress = false;
@@ -111,6 +122,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
     };
     const startRecording = () => {
         if (!stream || !window.MediaRecorder) return toast('Video recording is not available in this browser.');
+        if (activeFilter !== 'normal') toast('Filters apply to photos; video records unfiltered.');
         const chunks = [];
         const preview = captureVideoPreview();
         const captureMime = 'video/webm;codecs=vp8,opus';
@@ -145,6 +157,26 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
     };
     shoot.onpointerup = releaseShutter;
     shoot.onpointercancel = releaseShutter;
+    // Chrome on some Android devices exposes the hardware volume key as VolumeUp;
+    // other mobile browsers reserve it for system volume and never dispatch this event.
+    let volumeHeld = false;
+    const isVolumeUp = (e) => e.key === 'VolumeUp' || e.key === 'AudioVolumeUp';
+    const volumeDown = (e) => {
+        if (!isVolumeUp(e) || volumeHeld) return;
+        e.preventDefault(); volumeHeld = true; longPress = false;
+        holdTimer = setTimeout(() => { longPress = true; startRecording(); }, 300);
+    };
+    const volumeUp = (e) => {
+        if (!isVolumeUp(e) || !volumeHeld) return;
+        e.preventDefault(); volumeHeld = false; releaseShutter();
+    };
+    document.addEventListener('keydown', volumeDown);
+    document.addEventListener('keyup', volumeUp);
+    cameraInputCleanup = () => {
+        document.removeEventListener('keydown', volumeDown);
+        document.removeEventListener('keyup', volumeUp);
+        clearTimeout(holdTimer);
+    };
     startCamera();
 };
 
@@ -658,6 +690,7 @@ const route = () => {
     const parts = (location.hash.slice(1) || '/').split('/');
     const seg = parts[1], arg = parts[2];
     stopStream();
+    cameraInputCleanup();
     detachAll();               // leaving a conversation → background msgs go to notifications
     closeCurrentGroup();        // leaving a group view → tear its channel/call down
     mountChrome();

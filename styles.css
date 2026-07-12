@@ -80,6 +80,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .viewport video::-webkit-media-controls-enclosure{display:none!important}
 .camerr{position:absolute;inset:auto 16px 16px;color:#fff;background:#000000aa;padding:10px 14px;border-radius:12px;font-size:13px;text-align:center}
 .cambar{display:flex;align-items:center;justify-content:space-around;padding:16px 24px}
+.filterselect{align-self:center;margin:-6px auto 8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
 .shutter{width:74px;height:74px;border-radius:50%;border:5px solid #fff;background:transparent;cursor:pointer;transition:.1s}
 .shutter:active{transform:scale(.92);background:#ffffff33}
 .shutter.recording{border-color:#ff3b5c;background:#ff3b5c;box-shadow:0 0 0 8px #ff3b5c33}

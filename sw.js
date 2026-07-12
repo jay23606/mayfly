@@ -1,8 +1,8 @@
 // mayfly service worker — network-first so the live app + Supabase Realtime signaling
 // are never served stale; falls back to cache only when offline.
-const CACHE = 'mayfly-v19';
+const CACHE = 'mayfly-v20';
 const ASSETS = ['./', './index.html', './styles.css', './manifest.json', './icon.svg',
-    './app.js', './core.js', './util.js', './db.js', './rtc.js', './crypto.js', './chat.js', './groups.js'];
+    './app.js', './core.js', './util.js', './filters.js', './db.js', './rtc.js', './crypto.js', './chat.js', './groups.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

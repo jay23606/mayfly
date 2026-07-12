@@ -218,11 +218,6 @@ const wireframe = (ctx, source) => {
         if (original < 16) dst[at + 3] = 255;
     }
     putPixels(ctx, output);
-    const horizon = height * .56;
-    ctx.save(); ctx.strokeStyle = '#54ffff99'; ctx.lineWidth = Math.max(1, width / 800);
-    for (let n = 1; n < 10; n++) { const y = horizon + (height - horizon) * (1 - 1 / (n * .52 + 1)); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
-    for (let n = -7; n <= 7; n++) { ctx.beginPath(); ctx.moveTo(width / 2, horizon); ctx.lineTo(width / 2 + n * width / 7, height); ctx.stroke(); }
-    ctx.restore();
 };
 
 const databent = (ctx, source) => {

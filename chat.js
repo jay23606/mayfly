@@ -41,11 +41,28 @@ export const chatUnread = () => {
 
 // ---- local per-friend thread history ----
 const histGet = (uid) => idb.get('thread:' + uid).then(h => h || []);
-const histPush = async (uid, entry) => {
-    const h = await histGet(uid);
-    h.push(entry); if (h.length > 300) h.splice(0, h.length - 300);
-    await idb.set('thread:' + uid, h).catch(() => {});
+// A Story reply, an opened Snap, and an incoming chat can arrive close together.
+// Serialize their read-modify-write cycle so one stale history snapshot cannot erase
+// another entry when the page is later refreshed.
+const histWrites = new Map();
+const histUpdate = (uid, change) => {
+    const previous = histWrites.get(uid) || Promise.resolve();
+    const task = previous.catch(() => {}).then(async () => {
+        const history = await histGet(uid);
+        const result = await change(history);
+        await idb.set('thread:' + uid, history);
+        return result;
+    });
+    histWrites.set(uid, task);
+    void task.then(
+        () => { if (histWrites.get(uid) === task) histWrites.delete(uid); },
+        () => { if (histWrites.get(uid) === task) histWrites.delete(uid); },
+    );
+    return task;
 };
+const histPush = (uid, entry) => histUpdate(uid, (history) => {
+    history.push(entry); if (history.length > 300) history.splice(0, history.length - 300);
+});
 const lastLine = (h) => {
     if (!h || !h.length) return '';
     const m = h[h.length - 1];
@@ -116,12 +133,10 @@ const updateSentSnapStatus = async (id, status) => {
     if (statusRank[status] < statusRank[receipt.status || 'sent']) return;
     receipt.status = status;
     await idb.set(receiptKey(id), receipt);
-    const h = await histGet(receipt.uid);
-    const entry = h.find(e => e.kind === 'snap' && e.snapId === id);
-    if (entry && statusRank[status] >= statusRank[entry.status || 'sent']) {
-        entry.status = status;
-        await idb.set('thread:' + receipt.uid, h);
-    }
+    await histUpdate(receipt.uid, (history) => {
+        const entry = history.find(e => e.kind === 'snap' && e.snapId === id);
+        if (entry && statusRank[status] >= statusRank[entry.status || 'sent']) entry.status = status;
+    }).catch(() => {});
     if (openUid === receipt.uid) renderThreadBody(receipt.uid);
     if (convBox) renderConvs(convBox, openUid);
 };
@@ -224,7 +239,11 @@ const renderThreadBody = async (uid) => {
             e.status = 'expired'; dirty = true;
         }
     });
-    if (dirty) idb.set('thread:' + uid, h).catch(() => {});
+    if (dirty) histUpdate(uid, (history) => {
+        history.forEach(e => {
+            if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') e.status = 'expired';
+        });
+    }).catch(() => {});
     const snaps = (inboxByUser[uid] || []).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
     body.innerHTML = '';

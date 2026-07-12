@@ -66,22 +66,27 @@ const scaleTo = (im, max) => {
 const decode = async (blob) => ('createImageBitmap' in window)
     ? await createImageBitmap(blob, { imageOrientation: 'from-image' }).catch(() => loadImage(URL.createObjectURL(blob)))
     : loadImage(URL.createObjectURL(blob));
-// From a File/Blob → { preview (tiny LQIP for DB), full (data URL for P2P/crypto), w, h }.
+// The display copy is capped to keep the composer quick, but rawBlob preserves the
+// original file for live and encrypted-relay delivery.
 const processImage = async (blob) => {
     const im = await decode(blob);
     const preview = scaleTo(im, PREVIEW_PX).toDataURL('image/jpeg', 0.5);
     const full    = scaleTo(im, FULL_PX).toDataURL('image/jpeg', FULL_Q);
-    const out = { preview, full, w: im.width, h: im.height, mime: 'image/jpeg' };
+    const out = { preview, full, rawBlob: blob, w: im.width, h: im.height, mime: blob.type || 'image/jpeg' };
     im.close?.();
     return out;
 };
-// Turn an already-drawn canvas (the live camera frame) into the same shape.
-const processCanvas = (canvas) => {
+// Turn an already-drawn canvas (the live camera frame) into the same shape while
+// retaining its native camera resolution for delivery.
+const processCanvas = async (canvas) => {
     const im = canvas;
+    const rawBlob = await new Promise((resolve, reject) => canvas.toBlob(
+        b => b ? resolve(b) : reject(new Error('Could not encode photo')), 'image/jpeg', 0.92,
+    ));
     return {
         preview: scaleTo(im, PREVIEW_PX).toDataURL('image/jpeg', 0.5),
         full:    scaleTo(im, FULL_PX).toDataURL('image/jpeg', FULL_Q),
-        w: im.width, h: im.height, mime: 'image/jpeg',
+        rawBlob, w: im.width, h: im.height, mime: 'image/jpeg',
     };
 };
 // A video snap keeps its original recording and derives a tiny image preview for the inbox.

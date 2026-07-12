@@ -1,6 +1,6 @@
 // mayfly service worker — network-first so the live app + Supabase Realtime signaling
 // are never served stale; falls back to cache only when offline.
-const CACHE = 'mayfly-v10';
+const CACHE = 'mayfly-v11';
 const ASSETS = ['./', './index.html', './styles.css', './manifest.json', './icon.svg',
     './app.js', './core.js', './util.js', './db.js', './rtc.js', './crypto.js', './chat.js', './groups.js'];
 

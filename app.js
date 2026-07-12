@@ -82,23 +82,16 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         try { finishShot(f.type.startsWith('video/') ? await processVideo(f) : await processImage(f)); }
         catch (e) { toast('Could not read that media.'); }
     };
-    $('#shoot').onclick = () => {
-        const v = $('#cam'); if (!v || !v.videoWidth) return toast('Camera not ready — use 🖼️ instead.');
-        const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
-        const ctx = c.getContext('2d');
-        if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }   // un-mirror the selfie
-        ctx.drawImage(v, 0, 0);
-        finishShot(processCanvas(c));
-    };
     const shoot = $('#shoot');
     shoot.onclick = null; // pointer handling below distinguishes a tap from a hold.
-    const takePhoto = () => {
+    const takePhoto = async () => {
         const v = $('#cam'); if (!v || !v.videoWidth) return toast('Camera not ready.');
         const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
         const ctx = c.getContext('2d');
         if (facing === 'user') { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
         ctx.drawImage(v, 0, 0);
-        finishShot(processCanvas(c));
+        try { finishShot(await processCanvas(c)); }
+        catch (e) { toast('Could not prepare that photo.'); }
     };
     const captureVideoPreview = () => {
         const v = $('#cam'); if (!v?.videoWidth) return null;
@@ -313,7 +306,9 @@ const sendSnap = async (shot, u, caption, secs) => {
     const base = { sender_id: state.me.id, recipient_id: u.id, preview: shot.preview,
         caption, w: shot.w, h: shot.h, timer: secs };
     const kind = shot.mime?.startsWith('video/') ? 'video' : 'photo';
-    const taggedDelivery = (k) => shot.mime?.startsWith('video/') ? `${k}:${encodeURIComponent(shot.mime)}` : k;
+    // The relay must retain the original image MIME too: rawBlob may be PNG, WebP,
+    // or a native-resolution JPEG rather than the composer's resized display copy.
+    const taggedDelivery = (k) => `${k}:${encodeURIComponent(shot.mime || 'image/jpeg')}`;
     try {
         if (isOnline(u.id)) {
             const id = uuid();
@@ -352,7 +347,7 @@ const postStory = async (shot, caption) => {
         const { error } = await db.addStory({ id, user_id: state.me.id, preview: shot.preview, caption, w: shot.w, h: shot.h,
             expires_at: new Date(Date.now() + STORY_TTL_H * 60 * 60 * 1000).toISOString() });
         if (error) throw error;
-        await idb.set('story:' + id, shot.full);
+        await idb.set('story:' + id, shot.rawBlob || shot.full);
         return true;
     } catch (e) { console.error('[mayfly] story failed', e); return false; }
 };

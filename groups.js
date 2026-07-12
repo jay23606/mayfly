@@ -40,11 +40,16 @@ const autoPlayGroupSnapVideo = (video) => {
         video.play().catch(() => {});
     });
 };
-const openGroupMediaViewer = (media) => {
+const openGroupMediaViewer = (media, inlinePlayer = null) => {
     const video = media.kind === 'video';
     const tag = video ? `<video src="${safeMediaUrl(media.url)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="${esc(media.name || 'image')}">`;
     const ov = el(`<div class="media-viewer" role="dialog" aria-modal="true"><button class="media-close" aria-label="Close media">✕</button>${tag}</div>`);
-    const close = () => { ov.remove(); window.removeEventListener('keydown', onKey); };
+    const resumeInline = video && inlinePlayer && !inlinePlayer.paused && !inlinePlayer.ended;
+    if (video) inlinePlayer?.pause();
+    const close = () => {
+        ov.remove(); window.removeEventListener('keydown', onKey);
+        if (resumeInline && inlinePlayer.isConnected) autoPlayGroupSnapVideo(inlinePlayer);
+    };
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     $('.media-close', ov).onclick = close;
     ov.onclick = (e) => { if (e.target === ov) close(); };
@@ -63,7 +68,7 @@ const groupMediaBubble = (gp, media, cls, name = '') => {
     if (mediaEl) {
         mediaEl.classList.add('expandable');
         mediaEl.title = 'Open larger';
-        mediaEl.onclick = () => openGroupMediaViewer(media);
+        mediaEl.onclick = () => openGroupMediaViewer(media, mediaEl);
         if (media.snap && media.kind === 'video') autoPlayGroupSnapVideo(mediaEl);
     }
 };

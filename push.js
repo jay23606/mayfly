@@ -8,7 +8,7 @@ import { db } from './db.js';
 // Public half of the VAPID key pair. Generate a pair with `npx web-push generate-vapid-keys`,
 // paste the publicKey here, and set the privateKey as the Edge Function's VAPID_PRIVATE_KEY
 // secret (see PUSH_SETUP.md). Left blank → push stays completely inert; nothing breaks.
-const VAPID_PUBLIC_KEY = 'BAruiwe7TwgZ3WISHAUPcX886kdhPjZqDLb4soUqaCCB7ohLIM23IvuoqJK9VkIOKzm3pq0dNLro1d5y5sLIuqY';
+const VAPID_PUBLIC_KEY = 'BF98ezZNUkNO5vDJUFKK6W90C7WdSP_TB9aWy0szf1YkTge6Lrvx891ja3OM5TAQwZF0y4vjntywMogdb6LVTms';
 const PUSH_PREF_KEY = 'mf_push_enabled';
 
 // VAPID keys are URL-safe base64; PushManager wants the raw bytes.
@@ -19,6 +19,8 @@ const urlB64ToBytes = (b64) => {
 };
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const subToRow = (sub) => { const j = sub.toJSON(); return { endpoint: sub.endpoint, p256dh: j.keys?.p256dh, auth: j.keys?.auth }; };
+const sameKey = (a, b) => a?.byteLength === b?.byteLength && a.every((value, i) => value === b[i]);
+const matchesCurrentVapidKey = (sub) => sameKey(new Uint8Array(sub?.options?.applicationServerKey || []), urlB64ToBytes(VAPID_PUBLIC_KEY));
 export const pushPreference = () => localStorage.getItem(PUSH_PREF_KEY) !== 'off';
 export const browserNotificationsEnabled = () => pushPreference() && 'Notification' in window && Notification.permission === 'granted';
 
@@ -38,8 +40,14 @@ export const initPush = async () => {
     const reg = swReady || await registerSW();
     if (!reg) return;
     try {
-        const sub = await reg.pushManager.getSubscription()
-            || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY) });
+        let sub = await reg.pushManager.getSubscription();
+        // A VAPID rotation invalidates the old subscription. Replace it rather than
+        // silently re-saving an endpoint bound to the previous application key.
+        if (sub && !matchesCurrentVapidKey(sub)) {
+            db.delPushSub(sub.endpoint).then(() => {}, () => {});
+            await sub.unsubscribe(); sub = null;
+        }
+        sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY) });
         db.savePushSub(subToRow(sub)).then(() => {}, () => {});
     } catch (e) {}
 };

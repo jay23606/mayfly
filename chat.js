@@ -442,7 +442,18 @@ const endCall = () => {
     setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff');
     $('#callo').classList.remove('on', 'voice');
 };
-const wireCallMedia = (c) => { curCall = c; c.on('stream', (s) => { $('#rv').srcObject = s; setStat($('#callo').classList.contains('voice') ? callPeerName : ''); }); c.on('close', endCall); c.on('error', endCall); };
+const wireCallMedia = (c) => {
+    curCall = c;
+    c.on('stream', (s) => {
+        const remote = $('#rv'); if (!remote || !s) return;
+        remote.srcObject = s;
+        // `autoplay` is present in the markup, but explicitly playing here covers
+        // browsers that do not restart a video after its srcObject changes.
+        remote.play().catch(() => {});
+        setStat($('#callo').classList.contains('voice') ? callPeerName : '');
+    });
+    c.on('close', endCall); c.on('error', endCall);
+};
 export const callUser = async (uid, username, video = true) => {
     if (!isOnline(uid)) return toast(username + ' is offline.');
     if (curCall) return toast('Already in a call.');
@@ -461,7 +472,15 @@ export const onIncomingCall = (incoming) => {
     banner.classList.add('on');
     const clear = () => banner.classList.remove('on');
     $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };
-    $('#acc', banner).onclick = async () => { clear(); try { localStream = await getMedia(video); } catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; } openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…'); incoming.answer(localStream); wireCallMedia(incoming); };
+    $('#acc', banner).onclick = async () => {
+        clear();
+        try { localStream = await getMedia(video); }
+        catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
+        openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…');
+        wireCallMedia(incoming);
+        try { await incoming.answer(localStream); }
+        catch (e) { console.error('[mayfly] answer call', e); endCall(); toast('Could not connect the call.'); }
+    };
 };
 $('#chang').onclick = endCall;
 $('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setCtl($('#cmute'), a.enabled, 'mic', 'micOff'); } };

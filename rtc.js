@@ -74,17 +74,30 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
 // Media (video/voice call) connection — same PeerJS-shaped surface as instamegle.
 const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
     const ev = emitter(); const pc = new RTCPeerConnection(ICE);
-    let remoteSet = false, closed = false; const pend = [];
+    let remoteSet = false, closed = false, remoteStream = null; const pend = [];
     const fireClose = () => { if (closed) return; closed = true; conns.delete(cid); ev.emit('close'); };
     const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
     const api = {
         peer: remote, metadata,
-        on(e, fn) { ev.on(e, fn); return api; },
+        // A callee can receive the offer's tracks before they tap Accept. Keep the
+        // stream so attaching this listener later does not permanently lose video.
+        on(e, fn) {
+            ev.on(e, fn);
+            if (e === 'stream' && remoteStream) queueMicrotask(() => fn(remoteStream));
+            return api;
+        },
         answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
         close() { try { pc.close(); } catch (e) {} conns.delete(cid); },
     };
     pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'media', ice: e.candidate }); };
-    pc.ontrack = (e) => ev.emit('stream', e.streams[0]);
+    pc.ontrack = (e) => {
+        if (e.streams?.[0]) remoteStream = e.streams[0];
+        else {
+            remoteStream ||= new MediaStream();
+            if (!remoteStream.getTracks().some(t => t.id === e.track.id)) remoteStream.addTrack(e.track);
+        }
+        ev.emit('stream', remoteStream);
+    };
     let discT = null;
     pc.onconnectionstatechange = () => {
         const s = pc.connectionState;

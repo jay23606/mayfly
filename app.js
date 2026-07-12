@@ -2,6 +2,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
     safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
+import { initPush, registerSW } from './push.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
@@ -841,6 +842,7 @@ const sweepLocal = async () => {
             await db.delSnaps(expired.map(r => r.id));
         }
         await db.delExpiredMessages();   // drop undelivered chat older than a week
+        db.delMyStaleRings().then(() => {}, () => {});   // clear any call-ring rows I left behind
         const [{ data: snaps }, { data: stories }, keys] = await Promise.all([db.mySpentSnaps(), db.myStories(), idb.keys()]);
         const live = new Set([...(snaps || []).map(r => 'snap:' + r.id), ...(stories || []).map(r => 'story:' + r.id)]);
         for (const k of keys) if (typeof k === 'string' && (k.startsWith('snap:') || k.startsWith('story:')) && !live.has(k)) idb.del(k);
@@ -909,7 +911,10 @@ const enterApp = async (session) => {
     startRealtime();
     bootGroups();
     sweepLocal();
-    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    // Ask once for notification permission (also powers the in-app foreground notifications),
+    // then register a Web Push subscription so 1:1 messages/calls can wake a backgrounded app.
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(() => initPush()).catch(() => {});
+    else initPush();
     unmountChrome(); mountChrome();
     route();
     await bootChat();   // load unopened snaps + pull any messages waiting for me → sets the badge
@@ -923,16 +928,8 @@ sb.auth.onAuthStateChange((_evt, session) => {
 const { data: { session } } = await sb.auth.getSession();
 session ? enterApp(session) : viewGate();
 
-// Development mode: always load the current Mayfly files. This also removes older
-// offline workers/caches that can otherwise make UI fixes appear not to deploy.
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(async (registrations) => {
-        await Promise.all(registrations
-            .filter(registration => new URL(registration.scope).pathname.includes('/mayfly/'))
-            .map(registration => registration.unregister()));
-        if ('caches' in window) {
-            const names = await caches.keys();
-            await Promise.all(names.filter(name => name.startsWith('mayfly-')).map(name => caches.delete(name)));
-        }
-    }).catch(() => {});
-}
+// Register the cache-free service worker so Web Push can wake the app. It has no fetch
+// handler, so app files are still always fetched fresh from the network; its activate step
+// also clears any caches left behind by older offline workers (the reason we used to
+// unregister on boot). initPush() reuses this same registration after login.
+registerSW();

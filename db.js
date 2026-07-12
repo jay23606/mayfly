@@ -80,6 +80,19 @@ const db = {
     streaks: () => sb.from('mf_streaks').select('*')
         .or(`user_a.eq.${state.me.id},user_b.eq.${state.me.id}`).gt('count', 0),
 
+    // ---- web push (1:1 messages + calls) ----
+    // Subscriptions are keyed by browser endpoint; the Edge Function reads them (service role)
+    // to send "you have something" pushes. Content never leaves the client.
+    savePushSub: (sub) => sb.from('mf_push_subscriptions')
+        .upsert({ user_id: state.me.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, { onConflict: 'endpoint' }),
+    delPushSub: (endpoint) => sb.from('mf_push_subscriptions').delete().eq('endpoint', endpoint),
+    // a 1:1 call has no DB row of its own; this transient row is only a push trigger
+    ringCall: (callee_id, kind) => sb.from('mf_call_rings').insert({ caller_id: state.me.id, callee_id, kind }).select('id').maybeSingle(),
+    delRing: (id) => sb.from('mf_call_rings').delete().eq('id', id),
+    // sweep any of my ring rows older than a couple minutes (call already over) — boot GC
+    delMyStaleRings: () => sb.from('mf_call_rings').delete()
+        .eq('caller_id', state.me.id).lt('created_at', new Date(Date.now() - 2 * 60 * 1000).toISOString()),
+
     // ---- stories (24h, friends-only; RLS returns mine + friends' automatically) ----
     addStory: ({ id, preview, caption, w, h }) => sb.rpc('mf_add_story', {
         story_id: id, story_preview: preview, story_caption: caption, story_w: w, story_h: h,

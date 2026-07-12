@@ -303,6 +303,47 @@ create policy "mf_gm_delete" on public.mf_group_members for delete using (
   user_id = auth.uid() or auth.uid() = (select created_by from public.mf_groups g where g.id = group_id));
 
 -- ---------------------------------------------------------------------------
+-- mf_push_subscriptions: Web Push endpoints (one row per browser). A Supabase Edge
+-- Function reads these via the service role to fan out notifications for 1:1 messages
+-- and calls. No message content is ever stored or pushed — only "you have something";
+-- the client opens and decrypts. Users manage only their own rows.
+-- ---------------------------------------------------------------------------
+create table if not exists public.mf_push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists mf_push_subs_user_idx on public.mf_push_subscriptions (user_id);
+alter table public.mf_push_subscriptions enable row level security;
+drop policy if exists "mf_push_subs_all" on public.mf_push_subscriptions;
+create policy "mf_push_subs_all" on public.mf_push_subscriptions for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- mf_call_rings: a 1:1 call is ephemeral WebRTC signaling with no DB row, so the caller
+-- inserts a short-lived ring here purely to give the push webhook something to fire on.
+-- Deleted when the call ends; a boot sweep clears any the caller left behind.
+create table if not exists public.mf_call_rings (
+  id uuid primary key default gen_random_uuid(),
+  caller_id uuid not null references auth.users(id) on delete cascade,
+  callee_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'audio',
+  created_at timestamptz not null default now()
+);
+create index if not exists mf_call_rings_callee_idx on public.mf_call_rings (callee_id);
+alter table public.mf_call_rings enable row level security;
+drop policy if exists "mf_call_rings_insert" on public.mf_call_rings;
+create policy "mf_call_rings_insert" on public.mf_call_rings for insert with check (auth.uid() = caller_id);
+drop policy if exists "mf_call_rings_select" on public.mf_call_rings;
+create policy "mf_call_rings_select" on public.mf_call_rings for select
+  using (auth.uid() = caller_id or auth.uid() = callee_id);
+drop policy if exists "mf_call_rings_delete" on public.mf_call_rings;
+create policy "mf_call_rings_delete" on public.mf_call_rings for delete
+  using (auth.uid() = caller_id or auth.uid() = callee_id);
+
+-- ---------------------------------------------------------------------------
 -- Storage bucket for encrypted relay blobs (private; content is E2E-encrypted).
 -- ---------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)

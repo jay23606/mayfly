@@ -589,7 +589,7 @@ const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia
     video: video ? { facingMode: { ideal: facing } } : false,
     audio: true,
 });
-let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null;
+let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null, curRingId = null;
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
 // swap a control button's glyph + dim (red) it when the track is off
 const setCtl = (btn, on, onName, offName) => { if (!btn) return; btn.innerHTML = icon(on ? onName : offName); btn.classList.toggle('off', !on); };
@@ -631,6 +631,7 @@ const swapCallViews = () => {
 };
 const endCall = () => {
     clearTimeout(callStatusTimer); callStatusTimer = null;
+    if (curRingId) { db.delRing(curRingId).then(() => {}, () => {}); curRingId = null; }
     try { curCall?.close(); } catch (e) {} curCall = null;
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     const rv = $('#rv'), lv = $('#lv'); if (rv) rv.srcObject = null; if (lv) lv.srcObject = null;
@@ -670,6 +671,8 @@ export const callUser = async (uid, username, video = true) => {
     try { localStream = await getMedia(video, cameraFacing); } catch (e) { return toast('Camera/mic blocked'); }
     callPeerName = username;
     openCallStage(video); $('#callo').classList.add('on'); setStat((video ? 'Calling ' : 'Ringing ') + username + '…');
+    // transient ring row → push webhook wakes their backgrounded app (deleted in endCall)
+    db.ringCall(uid, video ? 'video' : 'audio').then(({ data }) => { curRingId = data?.id || null; }, () => {});
     wireCallMedia(peer.call(uid, localStream, { metadata: { username: state.profile.username, video } }));
 };
 export const onIncomingCall = (incoming) => {

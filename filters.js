@@ -17,6 +17,11 @@ export const FILTERS = [
     { id: 'vhs', label: 'VHS', css: 'sepia(.12) saturate(1.5) contrast(1.18)' },
     { id: 'pixel', label: 'Pixel', css: 'saturate(1.2) contrast(1.12)' },
     { id: 'glitch', label: 'Glitch', css: 'hue-rotate(24deg) saturate(1.5) contrast(1.14)' },
+    { id: 'fisheye', label: 'Fisheye', css: 'saturate(1.15) contrast(1.08)' },
+    { id: 'kaleidoscope', label: 'Kaleidoscope', css: 'saturate(1.35) contrast(1.08)' },
+    { id: 'halftone', label: 'Halftone', css: 'grayscale(.25) contrast(1.2)' },
+    { id: 'thermal', label: 'Thermal', css: 'hue-rotate(190deg) saturate(2) contrast(1.2)' },
+    { id: 'sketch', label: 'Sketch', css: 'grayscale(1) contrast(1.35)' },
 ];
 
 export const filterCss = (id) => FILTERS.find(f => f.id === id)?.css || 'none';
@@ -85,12 +90,89 @@ const glitch = (ctx, source) => {
     ctx.restore();
 };
 
+const sourcePixels = (ctx, source) => {
+    const base = scratch(ctx.canvas.width, ctx.canvas.height), bctx = base.getContext('2d');
+    bctx.drawImage(source, 0, 0, base.width, base.height);
+    return { base, bctx, pixels: bctx.getImageData(0, 0, base.width, base.height) };
+};
+const putPixels = (ctx, image) => {
+    const out = scratch(ctx.canvas.width, ctx.canvas.height);
+    out.getContext('2d').putImageData(image, 0, 0);
+    ctx.drawImage(out, 0, 0);
+};
+
+const fisheye = (ctx, source) => {
+    const { pixels: input } = sourcePixels(ctx, source), { width, height } = input;
+    const output = new ImageData(width, height), src = input.data, dst = output.data, cx = width / 2, cy = height / 2, radius = Math.min(cx, cy);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const nx = (x - cx) / radius, ny = (y - cy) / radius, r = Math.hypot(nx, ny), at = (y * width + x) * 4;
+        if (r > 1) { dst[at + 3] = 255; continue; }
+        const scale = r ? Math.pow(r, 1.65) / r : 0, sx = Math.max(0, Math.min(width - 1, Math.round(cx + nx * scale * radius))), sy = Math.max(0, Math.min(height - 1, Math.round(cy + ny * scale * radius))), from = (sy * width + sx) * 4;
+        dst[at] = src[from]; dst[at + 1] = src[from + 1]; dst[at + 2] = src[from + 2]; dst[at + 3] = 255;
+    }
+    putPixels(ctx, output);
+};
+
+const kaleidoscope = (ctx, source) => {
+    const { pixels: input } = sourcePixels(ctx, source), { width, height } = input;
+    const output = new ImageData(width, height), src = input.data, dst = output.data, cx = width / 2, cy = height / 2, sector = (Math.PI * 2) / 6;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const dx = x - cx, dy = y - cy, radius = Math.hypot(dx, dy);
+        const angle = Math.atan2(dy, dx), wrapped = ((angle % sector) + sector) % sector, folded = Math.abs(wrapped - sector / 2);
+        const sx = Math.max(0, Math.min(width - 1, Math.round(cx + Math.cos(folded) * radius))), sy = Math.max(0, Math.min(height - 1, Math.round(cy + Math.sin(folded) * radius)));
+        const at = (y * width + x) * 4, from = (sy * width + sx) * 4;
+        dst[at] = src[from]; dst[at + 1] = src[from + 1]; dst[at + 2] = src[from + 2]; dst[at + 3] = 255;
+    }
+    putPixels(ctx, output);
+};
+
+const halftone = (ctx, source) => {
+    const { pixels } = sourcePixels(ctx, source), { width, height } = ctx.canvas, cell = Math.max(5, Math.round(Math.min(width, height) / 72)), data = pixels.data;
+    ctx.save(); ctx.fillStyle = '#f7f0df'; ctx.fillRect(0, 0, width, height); ctx.fillStyle = '#251b36';
+    for (let y = cell / 2; y < height; y += cell) for (let x = cell / 2; x < width; x += cell) {
+        const at = (Math.min(height - 1, y | 0) * width + Math.min(width - 1, x | 0)) * 4, sample = [data[at], data[at + 1], data[at + 2]];
+        const light = (sample[0] * .2126 + sample[1] * .7152 + sample[2] * .0722) / 255, radius = (1 - light) * cell * .48;
+        ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+};
+
+const thermal = (ctx, source) => {
+    const { pixels: input } = sourcePixels(ctx, source), { width, height } = input, output = new ImageData(width, height), src = input.data, dst = output.data;
+    const stops = [[24, 18, 92], [0, 124, 255], [0, 232, 170], [255, 224, 0], [255, 47, 0]];
+    for (let i = 0; i < src.length; i += 4) {
+        const light = (src[i] * .2126 + src[i + 1] * .7152 + src[i + 2] * .0722) / 255, point = light * (stops.length - 1), lo = Math.floor(point), hi = Math.min(stops.length - 1, lo + 1), mix = point - lo;
+        dst[i] = stops[lo][0] + (stops[hi][0] - stops[lo][0]) * mix;
+        dst[i + 1] = stops[lo][1] + (stops[hi][1] - stops[lo][1]) * mix;
+        dst[i + 2] = stops[lo][2] + (stops[hi][2] - stops[lo][2]) * mix; dst[i + 3] = 255;
+    }
+    putPixels(ctx, output);
+};
+
+const sketch = (ctx, source) => {
+    const { pixels: input } = sourcePixels(ctx, source), { width, height } = input, src = input.data, output = new ImageData(width, height), dst = output.data;
+    for (let i = 0; i < dst.length; i += 4) { dst[i] = dst[i + 1] = dst[i + 2] = dst[i + 3] = 255; }
+    const light = (x, y) => { const i = (y * width + x) * 4; return src[i] * .2126 + src[i + 1] * .7152 + src[i + 2] * .0722; };
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+        const gx = -light(x - 1, y - 1) + light(x + 1, y - 1) - 2 * light(x - 1, y) + 2 * light(x + 1, y) - light(x - 1, y + 1) + light(x + 1, y + 1);
+        const gy = -light(x - 1, y - 1) - 2 * light(x, y - 1) - light(x + 1, y - 1) + light(x - 1, y + 1) + 2 * light(x, y + 1) + light(x + 1, y + 1);
+        const value = Math.max(0, 255 - Math.min(255, Math.hypot(gx, gy) * .9)), at = (y * width + x) * 4;
+        dst[at] = dst[at + 1] = dst[at + 2] = value; dst[at + 3] = 255;
+    }
+    putPixels(ctx, output);
+};
+
 export const drawFiltered = (ctx, source, filter = 'normal') => {
     if (filter === 'disposable') return disposable(ctx, source);
     if (filter === 'duotone') return duotone(ctx, source);
     if (filter === 'vhs') return vhs(ctx, source);
     if (filter === 'pixel') return pixel(ctx, source);
     if (filter === 'glitch') return glitch(ctx, source);
+    if (filter === 'fisheye') return fisheye(ctx, source);
+    if (filter === 'kaleidoscope') return kaleidoscope(ctx, source);
+    if (filter === 'halftone') return halftone(ctx, source);
+    if (filter === 'thermal') return thermal(ctx, source);
+    if (filter === 'sketch') return sketch(ctx, source);
     drawBase(ctx, source, filter);
 };
 

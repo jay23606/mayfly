@@ -431,7 +431,7 @@ const renderStoriesBar = async (into) => {
 // Full-screen story player. It advances through each person's stories, then the next person.
 const playStories = (groups, startGroup = 0) => {
     if (!groups.length) return;
-    let i = 0, groupIndex = startGroup, timerId = null, items, mine, closed = false;
+    let i = 0, groupIndex = startGroup, timerId = null, advanceStarted = 0, advanceRemaining = 5000, items, mine, closed = false;
     const ov = el(`<div class="player stories"><div class="segs"></div>
         <img alt="story"><div class="pcap"></div><div class="pname"></div>
         <div class="tapzones"><div class="tz left"></div><div class="tz right"></div></div>
@@ -445,7 +445,27 @@ const playStories = (groups, startGroup = 0) => {
     document.body.appendChild(ov);
     const img = $('img', ov), segs = $('.segs', ov), more = $('.storymore', ov), menu = $('.storymenu', ov), reply = $('.storyreply', ov);
     let ownStoryUrl = null;
-    const close = () => { closed = true; clearTimeout(timerId); if (ownStoryUrl) URL.revokeObjectURL(ownStoryUrl); document.removeEventListener('keydown', onKeydown); ov.remove(); };
+    const stopAdvance = () => { clearTimeout(timerId); timerId = null; };
+    const pauseAdvance = () => {
+        if (!timerId) return;
+        advanceRemaining = Math.max(0, advanceRemaining - (Date.now() - advanceStarted));
+        stopAdvance();
+        const bar = segs.querySelector(`i[data-seg="${i}"]`);
+        if (!bar) return;
+        const trackWidth = bar.parentElement?.getBoundingClientRect().width || 1;
+        const width = Math.min(trackWidth, parseFloat(getComputedStyle(bar).width) || 0);
+        bar.style.transition = 'none';
+        bar.style.width = `${(width / trackWidth) * 100}%`;
+    };
+    const resumeAdvance = () => {
+        if (timerId || closed) return;
+        if (advanceRemaining <= 0) return void show(i + 1);
+        const bar = segs.querySelector(`i[data-seg="${i}"]`);
+        if (bar) requestAnimationFrame(() => { bar.style.transition = `width ${advanceRemaining}ms linear`; bar.style.width = '100%'; });
+        advanceStarted = Date.now();
+        timerId = setTimeout(() => show(i + 1), advanceRemaining);
+    };
+    const close = () => { closed = true; stopAdvance(); if (ownStoryUrl) URL.revokeObjectURL(ownStoryUrl); document.removeEventListener('keydown', onKeydown); ov.remove(); };
     const setGroup = (nextGroup, atEnd = false) => {
         groupIndex = nextGroup;
         ({ items, mine } = groups[groupIndex]);
@@ -453,7 +473,7 @@ const playStories = (groups, startGroup = 0) => {
         show(atEnd ? items.length - 1 : 0);
     };
     const show = async (k) => {
-        clearTimeout(timerId);
+        stopAdvance();
         if (ownStoryUrl) { URL.revokeObjectURL(ownStoryUrl); ownStoryUrl = null; }
         if (k < 0) return groupIndex > 0 ? setGroup(groupIndex - 1, true) : show(0);
         if (k >= items.length) return groupIndex < groups.length - 1 ? setGroup(groupIndex + 1) : close();
@@ -477,8 +497,8 @@ const playStories = (groups, startGroup = 0) => {
         if (full) { img.src = safeMediaUrl(full); img.style.filter = 'none'; }
         if (mine) showViewers(s.id);
         // advance the current segment bar, then move on
-        requestAnimationFrame(() => { const bar = segs.querySelector(`i[data-seg="${k}"]`); if (bar) { bar.style.transition = 'width 5s linear'; bar.style.width = '100%'; } });
-        timerId = setTimeout(() => show(i + 1), 5000);
+        advanceRemaining = 5000;
+        resumeAdvance();
     };
     const showViewers = async (id) => {
         const { data } = await db.storyViewers(id);
@@ -499,9 +519,12 @@ const playStories = (groups, startGroup = 0) => {
         if (!text || mine || !s?.user_id) return;
         const send = $('button', reply); send.disabled = true;
         const sent = await sendStoryReply(s.user_id, s.author?.username || 'Story author', text, s);
-        if (sent) { $('input', reply).value = ''; toast('Story reply sent.'); }
+        if (sent) { const input = $('input', reply); input.value = ''; input.blur(); toast('Story reply sent.'); }
         send.disabled = false;
     };
+    const replyInput = $('input', reply);
+    replyInput.onfocus = pauseAdvance;
+    replyInput.onblur = resumeAdvance;
     more.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
     $('.storydelete', ov).onclick = async (e) => {
         e.stopPropagation();

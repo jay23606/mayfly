@@ -2,6 +2,7 @@ import { app, $, $$, el, esc, toast, state, initial, avatarHTML, safeMediaUrl, m
 import { peer } from './rtc.js';
 import { callMenu } from './chat.js';
 import { db } from './db.js';
+import { browserNotificationsEnabled } from './push.js';
 
 // ===================== group chats + mesh video calls =====================
 // A group is persistent (mf_groups). While the view is open, members share a private
@@ -48,7 +49,7 @@ const promptGroupName = async (group) => {
     return name;
 };
 const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
-const notifyGroup = (gp, body) => { if (!gp.node && window.Notification?.permission === 'granted') new Notification(gp.name || 'Group', { body }); };
+const notifyGroup = (gp, body) => { if (!gp.node && browserNotificationsEnabled()) new Notification(gp.name || 'Group', { body }); };
 
 // ---- group P2P media (files, clips, inline Snaps, and timed view-once Snaps) ----
 const MEDIA_MAX = 20 * 1024 * 1024;

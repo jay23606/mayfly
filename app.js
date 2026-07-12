@@ -2,7 +2,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
     safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
-import { initPush, registerSW } from './push.js';
+import { initPush, registerSW, enablePush, disablePush, pushPreference } from './push.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
@@ -735,6 +735,7 @@ const viewMe = () => {
       <input class="field" id="muser" value="${esc(p.username)}" autocomplete="off">
       <div class="err" id="merr"></div>
       <button class="btn" id="msave">Save</button>
+      <div class="settingrow"><div><b>Notifications</b><div class="muted tiny" id="pushstatus"></div></div><label class="switch"><input id="pushtoggle" type="checkbox"><span></span></label></div>
       <button class="btn ghost" id="mout">Log out</button>
       <p class="muted tiny">mayfly 🐛 — snaps vanish after they're opened. Full photos are never stored on our server: they stream peer-to-peer when your friend is online, or are end-to-end encrypted when they're not.</p>
     </main>`;
@@ -752,6 +753,24 @@ const viewMe = () => {
         const { error } = await db.updateProfile(patch);
         if (error) return void ($('#merr').textContent = /duplicate|unique/i.test(error.message) ? 'That username is taken.' : error.message);
         Object.assign(state.profile, patch); mountChrome(true); toast('Saved');
+    };
+    const pushToggle = $('#pushtoggle'), pushStatus = $('#pushstatus');
+    const refreshPushToggle = () => {
+        const supported = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+        pushToggle.checked = supported && pushPreference() && Notification.permission === 'granted';
+        if (!supported) pushStatus.textContent = 'Notifications are not supported by this browser.';
+        else if (!pushPreference()) pushStatus.textContent = 'Off on this device.';
+        else if (Notification.permission === 'denied') pushStatus.textContent = 'Blocked in browser settings.';
+        else if (Notification.permission === 'granted') pushStatus.textContent = 'On for messages, Snaps, and calls.';
+        else pushStatus.textContent = 'Tap the switch to enable notifications.';
+    };
+    refreshPushToggle();
+    pushToggle.onchange = async () => {
+        if (pushToggle.checked) {
+            const enabled = await enablePush();
+            if (!enabled) toast('Allow notifications in your browser settings to turn them on.');
+        } else await disablePush();
+        refreshPushToggle();
     };
     $('#mout').onclick = async () => { stopStream(); await sb.auth.signOut(); };
 };
@@ -925,7 +944,7 @@ const enterApp = async (session) => {
     sweepLocal();
     // Ask once for notification permission (also powers the in-app foreground notifications),
     // then register a Web Push subscription so 1:1 messages/calls can wake a backgrounded app.
-    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(() => initPush()).catch(() => {});
+    if (pushPreference() && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(() => initPush()).catch(() => {});
     else initPush();
     unmountChrome(); mountChrome();
     route();

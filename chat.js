@@ -3,6 +3,7 @@ import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
 import { encryptText, decryptText, decryptWith } from './crypto.js';
+import { browserNotificationsEnabled } from './push.js';
 
 // ===================== unified conversations (snaps + chat, Snapchat-style) =====================
 // TEXT is async + end-to-end encrypted via mf_messages (works even when the friend is
@@ -116,7 +117,7 @@ const ingestMessage = async (row) => {
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
-    else { unreadMsg.add(row.sender_id); if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: 'New message' }); }
+    else { unreadMsg.add(row.sender_id); if (browserNotificationsEnabled()) new Notification('mayfly 🐛', { body: 'New message' }); }
 };
 // realtime INSERT handler (from app.js)
 export const onMessageInsert = (row) => { if (row.recipient_id === state.me.id) ingestMessage(row).then(() => { if (convBox) renderConvs(convBox, openUid); onChange(); }); };
@@ -127,7 +128,7 @@ export const onSnapInsert = async (row) => {
     (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
     if (!row.delivered_at) db.markSnapDelivered(row.id).then(() => {}, () => {});
     if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
-    else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: `New ${snapKind(row) === 'video' ? 'video' : 'photo'} Snap!` });
+    else if (browserNotificationsEnabled()) new Notification('mayfly 🐛', { body: `New ${snapKind(row) === 'video' ? 'video' : 'photo'} Snap!` });
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };

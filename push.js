@@ -9,6 +9,7 @@ import { db } from './db.js';
 // paste the publicKey here, and set the privateKey as the Edge Function's VAPID_PRIVATE_KEY
 // secret (see PUSH_SETUP.md). Left blank → push stays completely inert; nothing breaks.
 const VAPID_PUBLIC_KEY = 'BAruiwe7TwgZ3WISHAUPcX886kdhPjZqDLb4soUqaCCB7ohLIM23IvuoqJK9VkIOKzm3pq0dNLro1d5y5sLIuqY';
+const PUSH_PREF_KEY = 'mf_push_enabled';
 
 // VAPID keys are URL-safe base64; PushManager wants the raw bytes.
 const urlB64ToBytes = (b64) => {
@@ -18,6 +19,8 @@ const urlB64ToBytes = (b64) => {
 };
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const subToRow = (sub) => { const j = sub.toJSON(); return { endpoint: sub.endpoint, p256dh: j.keys?.p256dh, auth: j.keys?.auth }; };
+export const pushPreference = () => localStorage.getItem(PUSH_PREF_KEY) !== 'off';
+export const browserNotificationsEnabled = () => pushPreference() && 'Notification' in window && Notification.permission === 'granted';
 
 let swReady = null;
 // Register the (cache-free) worker and resolve once it's controlling the page. Safe to call
@@ -31,7 +34,7 @@ export const registerSW = async () => {
 // Boot path: if the user has already granted permission, make sure a live subscription is on
 // file (push endpoints rotate, so re-subscribe + upsert each start). Never prompts on its own.
 export const initPush = async () => {
-    if (!VAPID_PUBLIC_KEY || !supported() || Notification.permission !== 'granted') return;
+    if (!pushPreference() || !VAPID_PUBLIC_KEY || !supported() || Notification.permission !== 'granted') return;
     const reg = swReady || await registerSW();
     if (!reg) return;
     try {
@@ -48,6 +51,23 @@ export const enablePush = async () => {
     let perm = Notification.permission;
     if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch (e) { return false; } }
     if (perm !== 'granted') return false;
+    localStorage.setItem(PUSH_PREF_KEY, 'on');
     await initPush();
+    return true;
+};
+
+// Unsubscribing is device-local: other browsers signed into Mayfly keep their own
+// subscriptions and continue receiving notifications.
+export const disablePush = async () => {
+    localStorage.setItem(PUSH_PREF_KEY, 'off');
+    if (!supported()) return true;
+    try {
+        const reg = swReady || await registerSW();
+        const sub = await reg?.pushManager.getSubscription();
+        if (sub) {
+            db.delPushSub(sub.endpoint).then(() => {}, () => {});
+            await sub.unsubscribe();
+        }
+    } catch (e) {}
     return true;
 };

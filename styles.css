@@ -276,11 +276,11 @@ body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding
 .conv.unread .who b{font-weight:800}
 .camicon{display:inline-flex;align-items:center;color:var(--muted);padding:4px 6px;flex:none}
 
-.threadpane{display:none;flex:1;min-width:0;min-height:0;flex-direction:column}
+.threadpane{display:none;flex:1;min-width:0;min-height:0;overflow:hidden;flex-direction:column}
 /* a group opens inside the thread pane — fill it rather than the whole viewport */
 .threadpane .chatview{height:100%}
 .threadempty{margin:auto;color:var(--muted);padding:24px;text-align:center}
-.thread{display:flex;flex-direction:column;height:100%;min-height:0;width:100%}
+.thread{display:flex;flex-direction:column;height:100%;min-height:0;width:100%;overflow:hidden}
 .thead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);flex:none}
 .thead .who{flex:1;min-width:0}
 .thead .back{font-size:26px}
@@ -304,7 +304,7 @@ body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding
 .msgstatus.video{color:#ae8cff}
 .msgstatus.text{color:#5b8cff}
 .ctyping{min-height:0;padding:2px 14px;color:var(--muted);font-size:12px}
-.tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none;background:var(--bg)}
+.tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none;position:relative;z-index:2;background:var(--bg)}
 .tin .icon{font-size:20px;flex:none}
 .voicepreview{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel)}
 .voicepreview[hidden]{display:none}

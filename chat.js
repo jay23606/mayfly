@@ -34,6 +34,7 @@ const pendingSnapStatuses = new Map();
 const THREAD_CLEAR_KEY = 'mf_thread_clear_marks';
 const clearMarks = () => { try { return JSON.parse(localStorage.getItem(THREAD_CLEAR_KEY) || '{}'); } catch (e) { return {}; } };
 const clearAt = (uid) => { const marks = clearMarks(); return Math.max(Number(marks['*']) || 0, Number(marks[uid]) || 0); };
+const clearAllAt = () => Number(clearMarks()['*']) || 0;
 const markCleared = (uid) => { const marks = clearMarks(); marks[uid] = Date.now(); localStorage.setItem(THREAD_CLEAR_KEY, JSON.stringify(marks)); };
 const isAfterClear = (uid, at) => Number(at) > clearAt(uid);
 
@@ -199,7 +200,7 @@ export const renderConvs = async (box, activeUid) => {
         const snaps = pending.length;
         const kind = snaps ? snapKind(pending[0]) : null;
         const lastAt = h.length ? h[h.length - 1].at : 0;
-        if (u.id !== activeUid && clearAt(u.id) && !isAfterClear(u.id, lastAt) && !snaps) return null;
+        if (u.id !== activeUid && clearAllAt() && lastAt <= clearAllAt() && !snaps) return null;
         const unread = snaps > 0 || unreadMsg.has(u.id);
         const status = snaps ? `New ${kind === 'video' ? 'Video' : 'Photo'} Snap${snaps > 1 ? ` ×${snaps}` : ''}` : (lastLine(h) || 'Tap to chat');
         return { u, lastAt: Math.max(lastAt, snaps ? Date.now() : 0), unread, status, snaps, kind };

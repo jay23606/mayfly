@@ -92,7 +92,7 @@ const db = {
     myStories: () => sb.from('mf_stories').select('id').eq('user_id', state.me.id)
         .gt('expires_at', new Date().toISOString()),
     delStory: (id) => sb.from('mf_stories').delete().eq('id', id),
-    viewStory: (story_id) => sb.from('mf_story_views').upsert({ story_id, viewer_id: state.me.id }),
+    viewStory: (story_id) => sb.from('mf_story_views').upsert({ story_id, viewer_id: state.me.id }, { onConflict: 'story_id,viewer_id', ignoreDuplicates: true }),
     myViewedStories: () => sb.from('mf_story_views').select('story_id').eq('viewer_id', state.me.id),
     storyViewers: (story_id) => sb.from('mf_story_views')
         .select('viewed_at, viewer:viewer_id(' + PROF + ')').eq('story_id', story_id).order('viewed_at', { ascending: false }),

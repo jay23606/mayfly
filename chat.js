@@ -125,7 +125,7 @@ export const onMessageInsert = (row) => { if (row.recipient_id === state.me.id) 
 export const onSnapInsert = async (row) => {
     if (row.recipient_id !== state.me.id) return;
     (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
-    if (!row.delivered_at) db.markSnapDelivered(row.id);
+    if (!row.delivered_at) db.markSnapDelivered(row.id).then(() => {}, () => {});
     if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
     else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: `New ${snapKind(row) === 'video' ? 'video' : 'photo'} Snap!` });
     if (convBox) renderConvs(convBox, openUid);
@@ -359,7 +359,7 @@ const sendText = async (uid, username, text, localEntry = null) => {
     const enc = await encryptText(pub, text);
     const { error } = await db.sendMessage({ sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
-    db.bumpStreak(uid);
+    db.bumpStreak(uid).then(() => {}, () => {});
     return true;
 };
 export const sendStoryReply = async (uid, username, text, story) => {

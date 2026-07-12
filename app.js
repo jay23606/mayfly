@@ -380,7 +380,7 @@ const sendSnap = async (shot, u, caption, secs) => {
             await idb.set('snap:' + id, shot.rawBlob || shot.full);
             const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
             if (error) { await idb.del('snap:' + id); throw error; }
-            db.bumpStreak(u.id);
+            db.bumpStreak(u.id).then(() => {}, () => {});
             return { id, kind };
         }
         // offline → relay. Video is live-only (no small cap fits a clip); images only.
@@ -402,7 +402,7 @@ const sendSnap = async (shot, u, caption, secs) => {
         const expires_at = new Date(Date.now() + RELAY_TTL_DAYS * 24 * 3600 * 1000).toISOString();
         const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay', mime), iv, eph_pub: ephPub, expires_at });
         if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
-        db.bumpStreak(u.id);
+        db.bumpStreak(u.id).then(() => {}, () => {});
         return { id, kind };
     } catch (e) { console.error('[mayfly] send failed', e); return false; }
 };
@@ -512,7 +512,7 @@ const playStories = (groups, startGroup = 0) => {
         // The database-backed Story preview is intentionally size-bounded, but it
         // should remain readable when the author is offline.
         img.style.filter = 'none'; img.src = safeMediaUrl(s.preview);
-        if (!mine) db.viewStory(s.id);
+        if (!mine) db.viewStory(s.id).then(() => {}, () => {});
         // pull the full image P2P (from our own IndexedDB if it's ours)
         const shownGroup = groupIndex;
         let full = mine ? await idb.get('story:' + s.id) : await fetchSnap(s.id, s.user_id);

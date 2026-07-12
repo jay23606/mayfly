@@ -448,6 +448,14 @@ const openGroup = (group, container = app) => {
             toast(`${username} removed from the group.`);
             return true;
         },
+        onLeave: async () => {
+            if (!confirm('Leave this group?')) return false;
+            const { error } = await db.leaveGroup(gp.id);
+            if (error) { toast('Could not leave the group.'); return false; }
+            toast('You left the group.');
+            location.hash = '#/chats';
+            return true;
+        },
     });
     const form = $('.chatin', gp.node), input = $('.ginput', form);
     form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; bcast(gp, { t: 'msg', text: t }); gText(gp, 'You', t, 'me'); input.value = ''; };
@@ -502,6 +510,22 @@ const pickFriends = async (title, opts) => {
             $('.acts', row).appendChild(remove);
             body.insertBefore(row, list);
         });
+    }
+    if (opts.onLeave) {
+        const leave = el('<button type="button" class="btn ghost leavegroup">Leave group</button>');
+        leave.onclick = async () => {
+            leave.disabled = true;
+            try {
+                const left = await opts.onLeave();
+                if (left !== false) m.remove();
+                else leave.disabled = false;
+            } catch (e) {
+                console.error('[mayfly] leave group', e);
+                toast('Could not leave the group.');
+                leave.disabled = false;
+            }
+        };
+        body.insertBefore(leave, list);
     }
     const pickable = friends.filter(p => !(opts.exclude && opts.exclude.has(p.id)));
     if (!pickable.length) list.innerHTML = `<div class="empty">No friends to add.</div>`;

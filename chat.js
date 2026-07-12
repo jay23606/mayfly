@@ -26,6 +26,9 @@ const snapMime = (s) => {
     catch (e) { return 'image/jpeg'; }
 };
 const snapKind = (s) => snapMime(s).startsWith('video/') ? 'video' : 'photo';
+const receiptKey = (id) => 'snap-receipt:' + id;
+const statusRank = { sent: 0, delivered: 1, expired: 2, opened: 3 };
+const pendingSnapStatuses = new Map();
 
 const onChange = () => window.dispatchEvent(new Event('chat-unread'));
 export const chatUnread = () => {
@@ -78,31 +81,46 @@ export const onMessageInsert = (row) => { if (row.recipient_id === state.me.id) 
 export const onSnapInsert = async (row) => {
     if (row.recipient_id !== state.me.id) return;
     (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
+    if (!row.delivered_at) db.markSnapDelivered(row.id);
     if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
     else if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: `New ${snapKind(row) === 'video' ? 'video' : 'photo'} Snap!` });
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };
-export const noteSentSnap = (uid, snapId = null, snapKind = 'photo') =>
-    histPush(uid, { me: true, kind: 'snap', snapId, snapKind, status: 'delivered', at: Date.now() })
-        .then(() => { if (convBox) renderConvs(convBox, openUid); });
-
-// Snap ids the recipient has opened (their mf_snaps row was deleted → realtime DELETE).
-// Sender-side only: flips the "Delivered" receipt to "Opened".
-const openedSnapIds = new Set();
-export const markSnapOpened = (id) => {
-    if (!id) return;
-    openedSnapIds.add(id);
-    if (openUid) renderThreadBody(openUid);   // reconciles + persists the status
+export const noteSentSnap = async (uid, snapId = null, snapKind = 'photo') => {
+    const status = snapId ? (pendingSnapStatuses.get(snapId) || 'sent') : 'sent';
+    const entry = { me: true, kind: 'snap', snapId, snapKind, status, at: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+    await histPush(uid, entry);
+    if (snapId) { pendingSnapStatuses.delete(snapId); await idb.set(receiptKey(snapId), { uid, status }); }
     if (convBox) renderConvs(convBox, openUid);
 };
-// The sender-side "Delivered"/"Opened" receipt shown under a sent snap.
-const snapReceipt = (e) => `<div class="msgstatus me ${e.snapKind || 'photo'} ${e.status || 'delivered'}"${e.snapId ? ` data-snap="${e.snapId}"` : ''}><span class="si"></span><span class="sl">${e.status === 'opened' ? 'Opened' : 'Delivered'}</span></div>`;
+
+const updateSentSnapStatus = async (id, status) => {
+    if (!id) return;
+    const receipt = await idb.get(receiptKey(id));
+    if (!receipt) { pendingSnapStatuses.set(id, status); return; }
+    if (statusRank[status] < statusRank[receipt.status || 'sent']) return;
+    receipt.status = status;
+    await idb.set(receiptKey(id), receipt);
+    const h = await histGet(receipt.uid);
+    const entry = h.find(e => e.kind === 'snap' && e.snapId === id);
+    if (entry && statusRank[status] >= statusRank[entry.status || 'sent']) {
+        entry.status = status;
+        await idb.set('thread:' + receipt.uid, h);
+    }
+    if (openUid === receipt.uid) renderThreadBody(receipt.uid);
+    if (convBox) renderConvs(convBox, openUid);
+};
+export const markSnapDelivered = (id) => { updateSentSnapStatus(id, 'delivered'); };
+export const markSnapOpened = (id) => { updateSentSnapStatus(id, 'opened'); };
+export const markSnapRemoved = (id) => { setTimeout(() => updateSentSnapStatus(id, 'expired'), 250); };
+const snapReceipt = (e) => `<div class="msgstatus me ${e.snapKind || 'photo'} ${e.status || 'sent'}"${e.snapId ? ` data-snap="${e.snapId}"` : ''}><span class="si"></span><span class="sl">${({ sent: 'Sent', delivered: 'Delivered', opened: 'Opened', expired: 'Expired' })[e.status] || 'Sent'}</span></div>`;
 
 const refreshInbox = async () => {
     const { data } = await db.inbox();
     inboxByUser = {};
     (data || []).forEach(s => (inboxByUser[s.sender_id] = inboxByUser[s.sender_id] || []).push(s));
+    Promise.all((data || []).filter(s => !s.delivered_at).map(s => db.markSnapDelivered(s.id))).catch(() => {});
 };
 
 // ===================== conversation list =====================
@@ -184,9 +202,13 @@ export const openConversation = async (box, uid) => {
 const renderThreadBody = async (uid) => {
     const body = $('#tbody'); if (!body || openUid !== uid) return;
     const h = await histGet(uid);
-    // reconcile any snaps opened while this thread was closed, and persist the change
+    // Expire locally tracked receipts after their 24-hour delivery window.
     let dirty = false;
-    h.forEach(e => { if (e.kind === 'snap' && e.snapId && openedSnapIds.has(e.snapId) && e.status !== 'opened') { e.status = 'opened'; dirty = true; } });
+    h.forEach(e => {
+        if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') {
+            e.status = 'expired'; dirty = true;
+        }
+    });
     if (dirty) idb.set('thread:' + uid, h).catch(() => {});
     const snaps = (inboxByUser[uid] || []).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
@@ -216,15 +238,17 @@ const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; b
 // ---- send an async encrypted text ----
 const sendText = async (uid, username, text) => {
     await histPush(uid, { me: true, kind: 'text', text, at: Date.now() });
-    appendBubble(text, 'me');
+    if (openUid === uid) appendBubble(text, 'me');
     if (convBox) renderConvs(convBox, uid);
     const pub = await pubOf(uid);
-    if (!pub) return appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys');
+    if (!pub) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
     const enc = await encryptText(pub, text);
     const { error } = await db.sendMessage({ sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
-    if (error) appendBubble('(failed to send)', 'sys');
+    if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
     db.bumpStreak(uid);
+    return true;
 };
+export const sendStoryReply = (uid, username, text) => sendText(uid, username, `↩ Story reply: ${text}`);
 
 // ===================== snap opening =====================
 const openSnap = async (s, card) => {
@@ -234,7 +258,7 @@ const openSnap = async (s, card) => {
         if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id);
         else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); } }
     } catch (e) { console.error('[mayfly] open snap', e); }
-    if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card); }
+    if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card, false); }
     const video = snapMime(s).startsWith('video/');
     // The default (timer 0) saves the opened media into this device's chat history,
     // then consumes the encrypted/live delivery. It will render inline like any file.
@@ -284,7 +308,8 @@ const openSnap = async (s, card) => {
     }
     ov.onclick = finish;
 };
-const burnSnap = async (s, card) => {
+const burnSnap = async (s, card, wasOpened = true) => {
+    if (wasOpened) await db.markSnapOpened(s.id);
     await db.delSnap(s.id);
     if (s.delivery?.startsWith('relay')) sb.storage.from(SNAP_BUCKET).remove([s.id]);
     inboxByUser[s.sender_id] = (inboxByUser[s.sender_id] || []).filter(x => x.id !== s.id);

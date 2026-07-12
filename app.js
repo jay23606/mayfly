@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapOpened, bootChat } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -391,6 +391,7 @@ const playStories = (groups, startGroup = 0) => {
     const ov = el(`<div class="player stories"><div class="segs"></div>
         <img alt="story"><div class="pcap"></div><div class="pname"></div>
         <div class="tapzones"><div class="tz left"></div><div class="tz right"></div></div>
+        <form class="storyreply" hidden><input maxlength="120" placeholder="Reply to Story…" aria-label="Reply to Story"><button type="submit">Send</button></form>
         <button class="storymore" aria-label="Story options" title="Story options" hidden>⋮</button>
         <div class="storymenu" hidden><button class="storydelete" type="button">Delete story</button></div>
         <button class="storyclose" aria-label="Close stories" title="Close">×</button>
@@ -398,7 +399,7 @@ const playStories = (groups, startGroup = 0) => {
         <button class="storynext" aria-label="Next story" title="Next story">›</button>
         <div class="viewers"></div></div>`);
     document.body.appendChild(ov);
-    const img = $('img', ov), segs = $('.segs', ov), more = $('.storymore', ov), menu = $('.storymenu', ov);
+    const img = $('img', ov), segs = $('.segs', ov), more = $('.storymore', ov), menu = $('.storymenu', ov), reply = $('.storyreply', ov);
     const close = () => { closed = true; clearTimeout(timerId); document.removeEventListener('keydown', onKeydown); ov.remove(); };
     const setGroup = (nextGroup, atEnd = false) => {
         groupIndex = nextGroup;
@@ -413,6 +414,7 @@ const playStories = (groups, startGroup = 0) => {
         i = k;
         more.hidden = !mine;
         menu.hidden = true;
+        reply.hidden = mine;
         segs.querySelectorAll('i').forEach((s, j) => { s.style.transition = 'none'; s.style.width = j < k ? '100%' : '0'; });
         const s = items[k];
         $('.pname', ov).textContent = (s.author?.username) || (mine ? 'You' : '');
@@ -444,6 +446,15 @@ const playStories = (groups, startGroup = 0) => {
     $('.tz.right', ov).onclick = () => show(i + 1);
     $('.tz.left', ov).onclick = () => show(i - 1);
     $('.storyclose', ov).onclick = close;
+    reply.onsubmit = async (e) => {
+        e.preventDefault();
+        const text = $('input', reply).value.trim(), s = items[i];
+        if (!text || mine || !s?.user_id) return;
+        const send = $('button', reply); send.disabled = true;
+        const sent = await sendStoryReply(s.user_id, s.author?.username || 'Story author', text);
+        if (sent) { $('input', reply).value = ''; toast('Story reply sent.'); }
+        send.disabled = false;
+    };
     more.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
     $('.storydelete', ov).onclick = async (e) => {
         e.stopPropagation();
@@ -654,9 +665,15 @@ window.addEventListener('hashchange', () => { mountChrome(); route(); });
 const startRealtime = () => {
     sb.channel('mayfly-snaps')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_snaps', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onSnapInsert(payload.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mf_snaps' }, (payload) => {
+          const s = payload.new;
+          if (s?.sender_id !== state.me.id) return;
+          if (s.opened_at) markSnapOpened(s.id);
+          else if (s.delivered_at) markSnapDelivered(s.id);
+      })
       // one of my sent snaps was opened/expired (row deleted) → drop my local copy + mark opened
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_snaps' }, (payload) => {
-          if (payload.old?.id) { idb.del('snap:' + payload.old.id); markSnapOpened(payload.old.id); }
+          if (payload.old?.id) { idb.del('snap:' + payload.old.id); markSnapRemoved(payload.old.id); }
       })
       .subscribe();
     sb.channel('mayfly-messages')

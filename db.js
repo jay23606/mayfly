@@ -35,14 +35,18 @@ const db = {
     // inbox: unopened snaps sent to me, newest first, with sender profile
     inbox: () => sb.from('mf_snaps')
         .select('*, sender:sender_id(' + PROF + ')')
-        .eq('recipient_id', state.me.id).is('viewed_at', null)
+        .eq('recipient_id', state.me.id).is('viewed_at', null).gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false }),
     // pending (unopened) relay snaps I've sent to one recipient — for the offline cap
     pendingRelayTo: (recipient_id) => sb.from('mf_snaps')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
-        .like('delivery', 'relay%').is('viewed_at', null),
+        .like('delivery', 'relay%').is('viewed_at', null).gt('expires_at', new Date().toISOString()),
     addSnap: (row) => sb.from('mf_snaps').insert(row).select().maybeSingle(),
+    markSnapDelivered: (id) => sb.from('mf_snaps').update({ delivered_at: new Date().toISOString() })
+        .eq('id', id).is('delivered_at', null),
+    markSnapOpened: (id) => sb.from('mf_snaps').update({ opened_at: new Date().toISOString(), viewed_at: new Date().toISOString() })
+        .eq('id', id),
     delSnap: (id) => sb.from('mf_snaps').delete().eq('id', id),
     // snaps I sent that have now been opened / expired → clean up my device copies
     mySpentSnaps: () => sb.from('mf_snaps').select('id').eq('sender_id', state.me.id),

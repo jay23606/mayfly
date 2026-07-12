@@ -156,6 +156,10 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .storymore{top:calc(4px + env(safe-area-inset-top));right:50px;font-size:24px}
 .storymenu{position:absolute;z-index:6;top:calc(44px + env(safe-area-inset-top));right:50px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 8px 24px #0008}
 .storymenu button{border:0;background:none;color:#ff7890;font:inherit;font-weight:700;padding:10px 14px;cursor:pointer;white-space:nowrap}
+.storyreply{position:absolute;z-index:5;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));display:flex;gap:8px;padding:8px;border-radius:999px;background:#08080cdd;border:1px solid #ffffff22}
+.storyreply input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:#fff;font:inherit;padding:7px 10px}
+.storyreply input::placeholder{color:#ffffff99}
+.storyreply button{border:0;border-radius:999px;background:var(--grad);color:#08080c;font:inherit;font-weight:700;padding:7px 14px;cursor:pointer}
 .storyprev{top:50%;left:10px;transform:translateY(-50%);font-size:34px}
 .storynext{top:50%;right:10px;transform:translateY(-50%);font-size:34px}
 .viewers{position:absolute;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));color:#fff;font-size:13px;z-index:4;text-shadow:0 1px 6px #000}
@@ -308,6 +312,8 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .msgstatus .si{width:9px;height:9px;border-radius:2px;border:1.6px solid currentColor;box-sizing:border-box;flex:none}
 .msgstatus.delivered .si{background:currentColor}
 .msgstatus.opened .si{background:transparent}
+.msgstatus.sent .si{background:transparent;opacity:.65}
+.msgstatus.expired{color:var(--muted)}
 .msgstatus.photo{color:#ff5572}
 .msgstatus.video{color:#ae8cff}
 .msgstatus.text{color:#5b8cff}

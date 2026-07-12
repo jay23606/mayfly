@@ -70,6 +70,8 @@ create table if not exists public.mf_snaps (
   delivery     text not null,                      -- 'live' (P2P) | 'relay' (encrypted Storage)
   iv           text,
   eph_pub      text,
+  delivered_at timestamptz,
+  opened_at    timestamptz,
   viewed_at    timestamptz,
   created_at   timestamptz not null default now(),
   expires_at   timestamptz not null default now() + interval '24 hours'
@@ -77,6 +79,8 @@ create table if not exists public.mf_snaps (
 -- 0 means keep the Snap in the recipient's local chat history. Positive values
 -- remain view-once timers. This ALTER also updates already-created installs.
 alter table public.mf_snaps alter column timer set default 0;
+alter table public.mf_snaps add column if not exists delivered_at timestamptz;
+alter table public.mf_snaps add column if not exists opened_at timestamptz;
 create index if not exists mf_snaps_inbox_idx on public.mf_snaps (recipient_id, created_at desc);
 create index if not exists mf_snaps_sender_idx on public.mf_snaps (sender_id);
 alter table public.mf_snaps enable row level security;

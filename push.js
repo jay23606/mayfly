@@ -8,7 +8,7 @@ import { db } from './db.js';
 // Public half of the VAPID key pair. Generate a pair with `npx web-push generate-vapid-keys`,
 // paste the publicKey here, and set the privateKey as the Edge Function's VAPID_PRIVATE_KEY
 // secret (see PUSH_SETUP.md). Left blank → push stays completely inert; nothing breaks.
-const VAPID_PUBLIC_KEY = '';
+const VAPID_PUBLIC_KEY = 'BAruiwe7TwgZ3WISHAUPcX886kdhPjZqDLb4soUqaCCB7ohLIM23IvuoqJK9VkIOKzm3pq0dNLro1d5y5sLIuqY';
 
 // VAPID keys are URL-safe base64; PushManager wants the raw bytes.
 const urlB64ToBytes = (b64) => {

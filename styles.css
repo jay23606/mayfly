@@ -166,13 +166,13 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .icon{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center}
 .ic{display:block;flex:none}
 .icon.off{color:#ff3b5c}
-.chatlog{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+.chatlog{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
 .b{max-width:78%;padding:9px 13px;border-radius:16px;font-size:15px;word-wrap:break-word}
 .b.me{align-self:flex-start;background:var(--grad);color:#08080c;border-bottom-left-radius:5px}
 .b.them{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
 .b.sys{align-self:center;background:none;color:var(--muted);font-size:12px}
 .ctyping{min-height:16px;padding:0 14px 4px;color:var(--muted);font-size:12px}
-.chatin{display:flex;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.chatin{display:flex;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none;background:var(--bg)}
 .chatin input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:11px 16px;outline:none;font-size:16px}
 .chatin button{background:var(--grad);color:#08080c;border:0;border-radius:999px;padding:0 20px;font-weight:700;cursor:pointer}
 .groupin{align-items:center}
@@ -276,16 +276,16 @@ body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding
 .conv.unread .who b{font-weight:800}
 .camicon{display:inline-flex;align-items:center;color:var(--muted);padding:4px 6px;flex:none}
 
-.threadpane{display:none;flex:1;min-width:0;flex-direction:column}
+.threadpane{display:none;flex:1;min-width:0;min-height:0;flex-direction:column}
 /* a group opens inside the thread pane — fill it rather than the whole viewport */
 .threadpane .chatview{height:100%}
 .threadempty{margin:auto;color:var(--muted);padding:24px;text-align:center}
-.thread{display:flex;flex-direction:column;height:100%;width:100%}
+.thread{display:flex;flex-direction:column;height:100%;min-height:0;width:100%}
 .thead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);flex:none}
 .thead .who{flex:1;min-width:0}
 .thead .back{font-size:26px}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
-.tbody{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+.tbody{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
 .threadhint{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
 .snapcard{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
 .snapcard.photo{border-color:#ff3b5c;background:#ff3b5c18}
@@ -304,7 +304,7 @@ body.inchat main.chats{max-width:none;height:calc(100dvh - var(--tab-h));padding
 .msgstatus.video{color:#ae8cff}
 .msgstatus.text{color:#5b8cff}
 .ctyping{min-height:0;padding:2px 14px;color:var(--muted);font-size:12px}
-.tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none}
+.tin{display:flex;align-items:center;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none;background:var(--bg)}
 .tin .icon{font-size:20px;flex:none}
 .voicepreview{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel)}
 .voicepreview[hidden]{display:none}

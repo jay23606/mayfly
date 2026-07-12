@@ -1,12 +1,17 @@
-// Service worker for mayfly. It deliberately has NO fetch handler, so the app's files are
-// always fetched fresh from the network (no stale-cache surprises during development); its
-// only jobs are to clear caches left by older offline workers and to receive Web Push.
+// Service worker for mayfly. It stores no application data, but it does make each
+// navigation and asset request bypass GitHub Pages' short HTTP cache. That keeps a
+// phone from running an older interface after a deploy while retaining Web Push.
 self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', (event) => event.waitUntil(
   caches.keys().then((keys) => Promise.all(
     keys.filter((key) => key.startsWith('mayfly-')).map((key) => caches.delete(key))
   )).then(() => self.clients.claim())
 ));
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(fetch(event.request, { cache: 'no-store' }));
+});
 
 // A push arrived (sent by the notify Edge Function). The payload carries only a title/body
 // and a click target — never message content.

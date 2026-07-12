@@ -29,7 +29,7 @@ let swReady = null;
 // repeatedly — the browser dedupes an identical registration.
 export const registerSW = async () => {
     if (!('serviceWorker' in navigator)) return null;
-    try { await navigator.serviceWorker.register('sw.js'); swReady = await navigator.serviceWorker.ready; return swReady; }
+    try { await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); swReady = await navigator.serviceWorker.ready; return swReady; }
     catch (e) { return null; }
 };
 

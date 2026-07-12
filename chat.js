@@ -633,6 +633,11 @@ export const callMenu = (anchor, pick) => {
     m.querySelectorAll('.cmi').forEach(b => b.onclick = () => { close(); pick(b.dataset.v === '1'); });
 };
 const openCallStage = (video) => {
+    // This also releases the portrait lock retained by an older installed Mayfly
+    // manifest. Browsers that do not implement the API simply keep normal system
+    // auto-rotation behaviour.
+    try { screen.orientation?.unlock?.(); } catch (e) {}
+    try { screen.unlockOrientation?.(); } catch (e) {}
     $('#callo').classList.toggle('voice', !video);
     $('#ccam').style.display = video ? '' : 'none';   // no camera toggle on a voice call
     $('#cflip').style.display = video ? '' : 'none';

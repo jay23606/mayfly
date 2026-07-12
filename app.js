@@ -761,7 +761,7 @@ const viewMe = () => {
         if (!supported) pushStatus.textContent = 'Notifications are not supported by this browser.';
         else if (!pushPreference()) pushStatus.textContent = 'Off on this device.';
         else if (Notification.permission === 'denied') pushStatus.textContent = 'Blocked in browser settings.';
-        else if (Notification.permission === 'granted') pushStatus.textContent = 'On for messages, Snaps, and calls.';
+        else if (Notification.permission === 'granted') pushStatus.textContent = 'On for 1:1 messages and calls.';
         else pushStatus.textContent = 'Tap the switch to enable notifications.';
     };
     refreshPushToggle();

@@ -270,7 +270,7 @@ const snapCard = (s) => {
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
 const storyReplyBubble = (e) => {
     const preview = e.preview ? `<img src="${safeMediaUrl(e.preview)}" alt="Story preview">` : '';
-    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg">${preview}<div class="storyreplylabel">↩ Story reply</div><div>${esc(e.text)}</div></div>`);
+    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }

@@ -878,4 +878,16 @@ sb.auth.onAuthStateChange((_evt, session) => {
 const { data: { session } } = await sb.auth.getSession();
 session ? enterApp(session) : viewGate();
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// Development mode: always load the current Mayfly files. This also removes older
+// offline workers/caches that can otherwise make UI fixes appear not to deploy.
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+        await Promise.all(registrations
+            .filter(registration => new URL(registration.scope).pathname.includes('/mayfly/'))
+            .map(registration => registration.unregister()));
+        if ('caches' in window) {
+            const names = await caches.keys();
+            await Promise.all(names.filter(name => name.startsWith('mayfly-')).map(name => caches.delete(name)));
+        }
+    }).catch(() => {});
+}

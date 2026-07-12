@@ -87,6 +87,14 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
             return api;
         },
         answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
+        // Replaces the sender's camera track without renegotiating or interrupting
+        // the audio stream (used by the mobile front/rear camera switch).
+        replaceVideoTrack: async (track) => {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (!sender || !track) return false;
+            await sender.replaceTrack(track);
+            return true;
+        },
         close() { try { pc.close(); } catch (e) {} conns.delete(cid); },
     };
     pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'media', ice: e.candidate }); };

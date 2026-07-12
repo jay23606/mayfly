@@ -211,12 +211,15 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .avatar.ib{width:44px;height:44px;background:var(--grad);color:#0a0a0f}
 #callo{position:fixed;inset:0;z-index:140;background:#000;display:none;flex-direction:column}
 #callo.on{display:flex}
-.stagev{position:relative;flex:1;overflow:hidden}
-#rv{width:100%;height:100%;object-fit:cover;background:#000}
-#lv{position:absolute;right:14px;bottom:14px;width:110px;height:150px;object-fit:contain;background:#111;border-radius:14px;border:2px solid #ffffff33}
+.stagev{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
+/* Preserve the entire remote/local frame in both portrait and landscape. The
+   black stage provides the unavoidable letterbox when aspect ratios differ. */
+#rv{width:100%;height:100%;object-fit:contain;background:#000}
+#lv{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));width:clamp(96px,26vw,200px);aspect-ratio:3/4;height:auto;object-fit:contain;background:#111;border-radius:14px;border:2px solid #ffffff66;cursor:pointer;box-shadow:0 5px 18px #0009}
+#lv:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
 .cstat{position:absolute;left:0;right:0;top:40%;text-align:center;color:#fff;font-size:16px;text-shadow:0 1px 6px #000}
-.cbar{display:flex;justify-content:center;gap:22px;padding:20px 0 calc(24px + env(safe-area-inset-bottom))}
-.cbar button{width:60px;height:60px;border-radius:50%;border:0;background:#ffffff1c;color:#fff;cursor:pointer}
+.cbar{display:flex;justify-content:center;gap:clamp(10px,5vw,22px);padding:16px 0 calc(18px + env(safe-area-inset-bottom))}
+.cbar button{width:clamp(48px,14vw,60px);height:clamp(48px,14vw,60px);border-radius:50%;border:0;background:#ffffff1c;color:#fff;cursor:pointer}
 .cbar .hang{background:#ff3b5c;color:#fff}
 /* voice call: no video, show a calm gradient + the peer's name */
 #callo.voice{background:linear-gradient(160deg,#1b1436,#0a0a12)}

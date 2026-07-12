@@ -413,8 +413,11 @@ export const detachAll = () => { openUid = null; threadBox = null; };
 export const bootChat = async () => { await refreshInbox(); await syncMessages(); };
 
 // ===================== 1:1 calling (video or voice) =====================
-const getMedia = (video) => navigator.mediaDevices.getUserMedia({ video: !!video, audio: true });
-let localStream = null, curCall = null, callPeerName = '';
+const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia({
+    video: video ? { facingMode: { ideal: facing } } : false,
+    audio: true,
+});
+let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false;
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
 // swap a control button's glyph + dim (red) it when the track is off
 const setCtl = (btn, on, onName, offName) => { if (!btn) return; btn.innerHTML = icon(on ? onName : offName); btn.classList.toggle('off', !on); };
@@ -433,23 +436,43 @@ export const callMenu = (anchor, pick) => {
 const openCallStage = (video) => {
     $('#callo').classList.toggle('voice', !video);
     $('#ccam').style.display = video ? '' : 'none';   // no camera toggle on a voice call
-    $('#lv').srcObject = localStream;
+    $('#cflip').style.display = video ? '' : 'none';
+    localIsMain = false;
+    renderCallViews();
+};
+const playVideo = (node) => node?.play().catch(() => {});
+const renderCallViews = () => {
+    const main = $('#rv'), pip = $('#lv'); if (!main || !pip) return;
+    const mainStream = localIsMain ? localStream : remoteStream;
+    const pipStream = localIsMain ? remoteStream : localStream;
+    main.srcObject = mainStream || null; pip.srcObject = pipStream || null;
+    // Never play our own microphone through the speakers. The remote stream stays
+    // audible even when it occupies the small preview.
+    main.muted = localIsMain;
+    pip.muted = !localIsMain;
+    playVideo(main); playVideo(pip);
+};
+const swapCallViews = () => {
+    if (!localStream || !remoteStream || $('#callo').classList.contains('voice')) return;
+    localIsMain = !localIsMain;
+    renderCallViews();
 };
 const endCall = () => {
     try { curCall?.close(); } catch (e) {} curCall = null;
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     const rv = $('#rv'), lv = $('#lv'); if (rv) rv.srcObject = null; if (lv) lv.srcObject = null;
-    setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff');
+    remoteStream = null; localIsMain = false; cameraFacing = 'user';
+    setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera');
     $('#callo').classList.remove('on', 'voice');
 };
 const wireCallMedia = (c) => {
     curCall = c;
     c.on('stream', (s) => {
         const remote = $('#rv'); if (!remote || !s) return;
-        remote.srcObject = s;
+        remoteStream = s;
         // `autoplay` is present in the markup, but explicitly playing here covers
         // browsers that do not restart a video after its srcObject changes.
-        remote.play().catch(() => {});
+        renderCallViews();
         setStat($('#callo').classList.contains('voice') ? callPeerName : '');
     });
     c.on('close', endCall); c.on('error', endCall);
@@ -457,7 +480,8 @@ const wireCallMedia = (c) => {
 export const callUser = async (uid, username, video = true) => {
     if (!isOnline(uid)) return toast(username + ' is offline.');
     if (curCall) return toast('Already in a call.');
-    try { localStream = await getMedia(video); } catch (e) { return toast('Camera/mic blocked'); }
+    cameraFacing = 'user';
+    try { localStream = await getMedia(video, cameraFacing); } catch (e) { return toast('Camera/mic blocked'); }
     callPeerName = username;
     openCallStage(video); $('#callo').classList.add('on'); setStat((video ? 'Calling ' : 'Ringing ') + username + '…');
     wireCallMedia(peer.call(uid, localStream, { metadata: { username: state.profile.username, video } }));
@@ -474,7 +498,8 @@ export const onIncomingCall = (incoming) => {
     $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };
     $('#acc', banner).onclick = async () => {
         clear();
-        try { localStream = await getMedia(video); }
+        cameraFacing = 'user';
+        try { localStream = await getMedia(video, cameraFacing); }
         catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
         openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…');
         wireCallMedia(incoming);
@@ -485,4 +510,21 @@ export const onIncomingCall = (incoming) => {
 $('#chang').onclick = endCall;
 $('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setCtl($('#cmute'), a.enabled, 'mic', 'micOff'); } };
 $('#ccam').onclick = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setCtl($('#ccam'), v.enabled, 'video', 'videoOff'); } };
-setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');
+$('#cflip').onclick = async () => {
+    const oldTrack = localStream?.getVideoTracks()[0];
+    if (!oldTrack || !curCall?.replaceVideoTrack) return;
+    const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
+    let camera;
+    try { camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: nextFacing } }, audio: false }); }
+    catch (e) { return toast('Could not switch cameras.'); }
+    const newTrack = camera.getVideoTracks()[0];
+    try {
+        newTrack.enabled = oldTrack.enabled;
+        if (!await curCall.replaceVideoTrack(newTrack)) throw new Error('No video sender');
+        localStream.removeTrack(oldTrack); localStream.addTrack(newTrack); oldTrack.stop();
+        cameraFacing = nextFacing; renderCallViews();
+    } catch (e) { newTrack.stop(); toast('Could not switch cameras.'); }
+};
+$('#lv').onclick = swapCallViews;
+$('#lv').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); swapCallViews(); } };
+setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');

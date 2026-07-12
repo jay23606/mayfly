@@ -708,7 +708,11 @@ export const onIncomingCall = (incoming) => {
     const video = incoming.metadata?.video !== false;
     callPeerName = username;
     const banner = $('#incall');
-    banner.innerHTML = `<div class="avatar ib">${initial(username)}</div><div style="flex:1"><b>${esc(username)}</b><div class="muted" style="font-size:12px">Incoming ${video ? 'video' : 'voice'} call…</div></div><button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button>`;
+    banner.innerHTML = `<div class="incomingcard">
+      <div class="avatar ib">${initial(username)}</div>
+      <div class="incomingwho"><b>${esc(username)}</b><div>Incoming ${video ? 'video' : 'voice'} call</div></div>
+      <div class="incomingactions"><button class="pill primary" id="acc">Accept</button><button class="pill" id="dec">Decline</button></div>
+    </div>`;
     banner.classList.add('on');
     const clear = () => banner.classList.remove('on');
     $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };

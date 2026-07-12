@@ -233,21 +233,23 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 @keyframes pulse{50%{opacity:.4}}
 
 /* ---------- 1:1 video call ---------- */
-#incall{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));z-index:150;
-  display:none;align-items:center;gap:12px;background:#14141cf5;border:1px solid var(--line);
-  border-radius:16px;padding:12px 14px;backdrop-filter:blur(10px)}
+#incall{position:fixed;inset:0;z-index:150;display:none;align-items:center;justify-content:center;
+  padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));background:#0009;backdrop-filter:blur(8px)}
 #incall.on{display:flex}
-.avatar.ib{width:44px;height:44px;background:var(--grad);color:#0a0a0f}
-#callo{position:fixed;inset:0;z-index:140;background:#000;display:none;flex-direction:column}
+.incomingcard{width:min(100%,390px);display:flex;flex-direction:column;align-items:center;gap:14px;padding:28px 24px 24px;text-align:center;background:#171720fa;border:1px solid #ffffff22;border-radius:24px;box-shadow:0 20px 60px #000b}
+.avatar.ib{width:72px;height:72px;background:var(--grad);color:#0a0a0f;font-size:24px}
+.incomingwho b{display:block;font-size:22px;line-height:1.2}.incomingwho div{margin-top:5px;color:var(--muted);font-size:15px}
+.incomingactions{display:flex;width:100%;gap:10px;margin-top:8px}.incomingactions .pill{flex:1;min-height:52px;border-radius:14px;font-size:16px;font-weight:700}
+#callo{position:fixed;inset:0;z-index:140;height:100dvh;background:#000;display:none;flex-direction:column}
 #callo.on{display:flex}
 .stagev{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
 /* Preserve the entire remote/local frame in both portrait and landscape. The
    black stage provides the unavoidable letterbox when aspect ratios differ. */
-#rv{width:100%;height:100%;object-fit:contain;background:#000}
+#rv{display:block;width:100%;height:100%;object-fit:contain;background:#000}
 #lv{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));width:clamp(96px,26vw,200px);aspect-ratio:3/4;height:auto;object-fit:contain;background:#111;border-radius:14px;border:2px solid #ffffff66;cursor:pointer;box-shadow:0 5px 18px #0009}
 #lv:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
 .cstat{position:absolute;left:0;right:0;top:40%;text-align:center;color:#fff;font-size:16px;text-shadow:0 1px 6px #000}
-.cbar{display:flex;justify-content:center;gap:clamp(10px,5vw,22px);padding:16px 0 calc(18px + env(safe-area-inset-bottom))}
+.cbar{position:absolute;z-index:2;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:clamp(10px,5vw,22px);padding:34px 0 calc(18px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#000b 55%)}
 .cbar button{width:clamp(48px,14vw,60px);height:clamp(48px,14vw,60px);border-radius:50%;border:0;background:#ffffff1c;color:#fff;cursor:pointer}
 .cbar .hang{background:#ff3b5c;color:#fff}
 /* voice call: no video, show a calm gradient + the peer's name */
@@ -260,6 +262,12 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .cmi{display:flex;align-items:center;gap:10px;background:none;border:0;color:var(--text);padding:10px 12px;border-radius:10px;cursor:pointer;font-size:15px;font-weight:600;text-align:left}
 .cmi:hover{background:var(--panel2)}
 .cmi .ic{color:var(--accent2)}
+/* The remote frame remains uncropped while the call stage follows either phone
+   orientation. Move the small preview away from the landscape controls. */
+@media (orientation:landscape) and (max-height:600px){
+  #lv{top:max(14px,env(safe-area-inset-top));bottom:auto;width:clamp(92px,19vw,180px);aspect-ratio:4/3}
+  .cbar{padding-top:24px;padding-bottom:max(12px,env(safe-area-inset-bottom))}
+}
 
 /* ---------- groups (mesh video + avatars) ---------- */
 .gavatars{display:flex}

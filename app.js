@@ -9,6 +9,17 @@ import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupDat
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
+// Mobile browser chrome can change the visible viewport while a thread is being
+// pulled or scrolled. Drive chat layout from VisualViewport so its composer stays
+// inside the actually visible area rather than the larger layout viewport.
+const syncVisualViewport = () => {
+    const h = window.visualViewport?.height || window.innerHeight;
+    document.documentElement.style.setProperty('--app-vh', Math.round(h) + 'px');
+};
+syncVisualViewport();
+window.addEventListener('resize', syncVisualViewport);
+window.visualViewport?.addEventListener('resize', syncVisualViewport);
+window.visualViewport?.addEventListener('scroll', syncVisualViewport);
 
 // ===================== presence =====================
 let presenceCh = null;

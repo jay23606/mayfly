@@ -6,7 +6,7 @@ import { initPush, registerSW, enablePush, disablePush, pushPreference } from '.
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, bootChat, clearAllLocalConversations } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -850,7 +850,9 @@ const startRealtime = () => {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_messages', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onMessageInsert(payload.new))
       // my sent message was ingested by the recipient (row deleted) → blue "Delivered" receipt
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.id); })
-      .subscribe();
+      // The first inbox query can finish before this websocket is subscribed. A
+      // second catch-up here closes that race, which is most visible on mobile.
+      .subscribe((status) => { if (status === 'SUBSCRIBED') syncMessages().catch(() => {}); });
     sb.channel('mayfly-friends')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mf_friends' }, () => { if ($('#reqs')) { renderRequests(); renderFriends(); } })
       .subscribe();
@@ -940,6 +942,12 @@ const enterApp = async (session) => {
     await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c), onIncomingGroupData);
     startPresence();
     startRealtime();
+    // Mobile browsers commonly suspend websocket work in the background. Catch up
+    // immediately when the page returns, instead of making the user refresh.
+    const catchUpMessages = () => syncMessages().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') catchUpMessages(); }, { passive: true });
+    window.addEventListener('pageshow', catchUpMessages, { passive: true });
+    window.addEventListener('online', catchUpMessages, { passive: true });
     bootGroups();
     sweepLocal();
     // Ask once for notification permission (also powers the in-app foreground notifications),

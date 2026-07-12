@@ -21,6 +21,10 @@ let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
 let threadBox = null, convBox = null;
+// A realtime INSERT and a catch-up query can legitimately see the same row. Keep
+// one ingestion job per row so that overlap cannot add the same message twice.
+const messageJobs = new Map();
+const handledMessageIds = new Set();
 // Legacy photo snaps use plain "live" / "relay". Video snaps retain their MIME type
 // in the existing delivery value, avoiding a database migration.
 const snapMime = (s) => {
@@ -93,8 +97,8 @@ const pubOf = async (uid) => {
 // ---- pull any messages that arrived while we were offline ----
 export const syncMessages = async () => {
     const { data } = await db.myUndelivered();
-    for (const row of (data || [])) await ingestMessage(row);
-    if (convBox) renderConvs(convBox, openUid);
+    for (const row of (data || [])) await receiveMessage(row);
+    if (convBox?.isConnected) renderConvs(convBox, openUid);
     onChange();
 };
 const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPreview = null) => {
@@ -111,16 +115,38 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
 };
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
-    catch (e) { return; }
+    catch (e) { return false; }
     const at = new Date(row.created_at).getTime();
     const entry = await storyReplyFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
     else { unreadMsg.add(row.sender_id); if (browserNotificationsEnabled()) new Notification('mayfly 🐛', { body: 'New message' }); }
+    return true;
+};
+const receiveMessage = (row) => {
+    if (!row?.id || handledMessageIds.has(row.id)) return Promise.resolve(false);
+    if (messageJobs.has(row.id)) return messageJobs.get(row.id);
+    const job = ingestMessage(row).then((done) => {
+        if (done) {
+            handledMessageIds.add(row.id);
+            // Keep enough IDs to protect the short realtime/catch-up overlap
+            // without retaining a message ID for the life of the app.
+            if (handledMessageIds.size > 500) handledMessageIds.delete(handledMessageIds.values().next().value);
+        }
+        return done;
+    }).finally(() => messageJobs.delete(row.id));
+    messageJobs.set(row.id, job);
+    return job;
 };
 // realtime INSERT handler (from app.js)
-export const onMessageInsert = (row) => { if (row.recipient_id === state.me.id) ingestMessage(row).then(() => { if (convBox) renderConvs(convBox, openUid); onChange(); }); };
+export const onMessageInsert = (row) => {
+    if (row.recipient_id !== state.me.id) return;
+    receiveMessage(row).then(() => {
+        if (convBox?.isConnected) renderConvs(convBox, openUid);
+        onChange();
+    }).catch((e) => console.warn('[mayfly] could not ingest live message', e));
+};
 
 // ---- a snap arrived for me / I sent one ----
 export const onSnapInsert = async (row) => {
@@ -302,7 +328,7 @@ export const openConversation = async (box, uid) => {
     ensureConn(uid, username);                     // best-effort live link for typing / media
     // grab any messages this friend sent while we were away
     const { data: pend } = await db.myUndelivered();
-    for (const row of (pend || [])) if (row.sender_id === uid) await ingestMessage(row);
+    for (const row of (pend || [])) if (row.sender_id === uid) await receiveMessage(row);
     renderThreadBody(uid);
     if (convBox) renderConvs(convBox, uid);
 };

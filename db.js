@@ -59,7 +59,9 @@ const db = {
         .or(`user_a.eq.${state.me.id},user_b.eq.${state.me.id}`).gt('count', 0),
 
     // ---- stories (24h, friends-only; RLS returns mine + friends' automatically) ----
-    addStory: (row) => sb.from('mf_stories').insert(row).select().maybeSingle(),
+    addStory: ({ id, preview, caption, w, h }) => sb.rpc('mf_add_story', {
+        story_id: id, story_preview: preview, story_caption: caption, story_w: w, story_h: h,
+    }),
     activeStories: () => sb.from('mf_stories').select('*, author:user_id(' + PROF + ')')
         .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }),
     // Keep only active rows when reconciling device-only full images. Expired stories

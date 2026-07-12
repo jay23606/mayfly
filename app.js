@@ -1,6 +1,6 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl,
-    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeAvatar,
-    idb, dataUrlToBytes, STORY_TTL_H } from './core.js';
+    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeAvatar,
+    idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
@@ -344,8 +344,9 @@ const sendSnap = async (shot, u, caption, secs) => {
 const postStory = async (shot, caption) => {
     try {
         const id = uuid();
-        const { error } = await db.addStory({ id, user_id: state.me.id, preview: shot.preview, caption, w: shot.w, h: shot.h,
-            expires_at: new Date(Date.now() + STORY_TTL_H * 60 * 60 * 1000).toISOString() });
+        const source = shot.rawBlob || await fetch(shot.full).then(r => r.blob());
+        const preview = await makeStoryPreview(source);
+        const { error } = await db.addStory({ id, preview, caption, w: shot.w, h: shot.h });
         if (error) throw error;
         await idb.set('story:' + id, shot.rawBlob || shot.full);
         return true;

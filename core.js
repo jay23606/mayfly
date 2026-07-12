@@ -10,6 +10,7 @@ const SNAP_BUCKET  = 'mf-snaps';   // Storage bucket holding E2E-encrypted relay
 const PREVIEW_PX   = 24;    // blurred LQIP shown in the inbox before you open a snap
 const FULL_PX      = 1080;  // longest edge of the full snap image (P2P / encrypted)
 const FULL_Q       = 0.85;  // JPEG quality of the full snap
+const STORY_PREVIEW_MAX = 32 * 1024; // maximum database bytes for an offline Story preview
 const SNAP_TTL_H   = 24;    // a snap self-destructs this many hours after it's sent
 const STORY_TTL_H  = 24;    // stories are visible for one day
 
@@ -89,6 +90,25 @@ const processCanvas = async (canvas) => {
         rawBlob, w: im.width, h: im.height, mime: 'image/jpeg',
     };
 };
+// Stories get a real offline fallback instead of a 24px LQIP. Adapt resolution and
+// JPEG quality until the entire base64 data URL fits in the database budget.
+const makeStoryPreview = async (blob) => {
+    const im = await decode(blob);
+    let edge = Math.min(480, Math.max(im.width, im.height));
+    for (; edge >= 64; edge = Math.floor(edge * 0.72)) {
+        const canvas = scaleTo(im, edge);
+        for (const quality of [0.82, 0.72, 0.62, 0.52, 0.42]) {
+            const preview = canvas.toDataURL('image/jpeg', quality);
+            if (new TextEncoder().encode(preview).byteLength <= STORY_PREVIEW_MAX) {
+                im.close?.();
+                return preview;
+            }
+        }
+    }
+    const preview = scaleTo(im, 48).toDataURL('image/jpeg', 0.35);
+    im.close?.();
+    return preview;
+};
 // A video snap keeps its original recording and derives a tiny image preview for the inbox.
 const processVideo = async (blob) => {
     const mime = blob.type || 'video/webm';
@@ -137,5 +157,5 @@ const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
-    processImage, processCanvas, processVideo, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
+    processImage, processCanvas, processVideo, makeStoryPreview, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
     isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, fullCache, isOnline };

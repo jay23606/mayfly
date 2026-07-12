@@ -300,32 +300,32 @@ const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) retur
 const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += 16384, i++) { try { dc.send(buf.slice(o, o + 16384)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
 const autoPlaySnapVideo = (video) => {
     if (!video) return;
-    video.play().catch(() => {
+    const play = () => video.play().catch(() => {
         // Browsers may require a direct user gesture for sound. Keep the Snap moving
         // even then, while preserving sound whenever the policy permits it.
         video.muted = true;
         video.play().catch(() => {});
     });
+    if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) play();
+    else video.addEventListener('canplay', play, { once: true });
 };
 const openMediaViewer = (m, inlinePlayer = null) => {
     const video = m.mediaKind === 'video';
-    const tag = video ? `<video src="${safeMediaUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
+    const reusePlayer = video && inlinePlayer;
+    const tag = reusePlayer ? '' : video ? `<video src="${safeMediaUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
     const ov = el(`<div class="media-viewer" role="dialog" aria-modal="true"><button class="media-close" aria-label="Close media">✕</button>${tag}</div>`);
-    const resumeInline = video && inlinePlayer && !inlinePlayer.paused && !inlinePlayer.ended;
-    if (video) inlinePlayer?.pause();
+    const marker = reusePlayer ? document.createComment('inline video') : null;
+    if (reusePlayer) { inlinePlayer.before(marker); ov.appendChild(inlinePlayer); }
     const close = () => {
         ov.remove(); window.removeEventListener('keydown', onKey);
-        if (resumeInline && inlinePlayer.isConnected) autoPlaySnapVideo(inlinePlayer);
+        if (marker?.parentNode) marker.replaceWith(inlinePlayer);
     };
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     $('.media-close', ov).onclick = close;
     ov.onclick = (e) => { if (e.target === ov) close(); };
     document.body.appendChild(ov);
     window.addEventListener('keydown', onKey);
-    if (video) {
-        const player = $('video', ov);
-        player.play().catch(() => {});
-    }
+    if (video) autoPlaySnapVideo(reusePlayer ? inlinePlayer : $('video', ov));
 };
 const mediaBubble = (m, cls) => {
     const url = safeMediaUrl(m.data);
@@ -338,7 +338,7 @@ const mediaBubble = (m, cls) => {
     if (media) {
         media.classList.add('expandable');
         media.title = 'Open larger';
-        media.onclick = () => openMediaViewer(m, media);
+        media.onclick = () => { if (!media.closest('.media-viewer')) openMediaViewer(m, media); };
     }
     return bubble;
 };

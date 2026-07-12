@@ -274,7 +274,7 @@ const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) retur
 const storyReplyBubble = (e) => {
     const w = Math.max(1, Math.min(4096, Number(e.storyW) || 4)), h = Math.max(1, Math.min(4096, Number(e.storyH) || 3));
     const preview = e.preview ? `<div class="storyreplypreview" style="aspect-ratio:${w} / ${h}"><img src="${safeMediaUrl(e.preview)}" alt="Story preview"></div>` : '';
-    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div><div class="storyreplytext">${esc(e.text || 'Story reply')}</div>${preview}</div>`);
+    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }

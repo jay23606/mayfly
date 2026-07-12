@@ -383,7 +383,18 @@ const openGroup = (group, container = app) => {
     $('.ghang', gp.node).onclick = () => leaveCall(gp);
     $('.gadd', gp.node).onclick = () => pickFriends('Add to group', {
         exclude: new Set(Object.keys(members)),
-        onPick: async (uid, username) => { const { error } = await db.addGroupMember(gp.id, uid); if (error) return toast('Could not add'); gp.members[uid] = { username }; gSys(gp, `${username} was added`); },
+        onPick: async (uid, username) => {
+            const { error } = await db.addGroupMember(gp.id, uid);
+            if (error) {
+                console.error('[mayfly] add group member', error);
+                toast(error.code === '23505' ? `${username} is already in this group.` : `Could not add ${username}.`);
+                return false;
+            }
+            gp.members[uid] = { username };
+            gSys(gp, `${username} was added`);
+            toast(`${username} added to the group.`);
+            return true;
+        },
     });
     const form = $('.chatin', gp.node), input = $('.ginput', form);
     form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; bcast(gp, { t: 'msg', text: t }); gText(gp, 'You', t, 'me'); input.value = ''; };
@@ -426,20 +437,45 @@ const pickFriends = async (title, opts) => {
             $('.acts', row).appendChild(cb);
         } else {
             const b = el('<button class="pill primary">Add</button>');
-            b.onclick = () => { m.remove(); opts.onPick(p.id, p.username); };
+            b.onclick = async () => {
+                b.disabled = true; b.textContent = 'Adding…';
+                try {
+                    const added = await opts.onPick(p.id, p.username);
+                    if (added !== false) m.remove();
+                    else { b.disabled = false; b.textContent = 'Add'; }
+                } catch (e) {
+                    console.error('[mayfly] group picker', e);
+                    toast('Could not add that friend.');
+                    b.disabled = false; b.textContent = 'Add';
+                }
+            };
             $('.acts', row).appendChild(b);
         }
         list.appendChild(row);
     });
-    if (opts.multi) $('#gcreate', body).onclick = () => { if (!selected.size) return toast('Pick at least one friend'); const name = $('#gname', body).value.trim() || 'Group'; m.remove(); opts.onCreate(name, [...selected.keys()]); };
+    if (opts.multi) $('#gcreate', body).onclick = async () => {
+        if (!selected.size) return toast('Pick at least one friend');
+        const create = $('#gcreate', body), name = $('#gname', body).value.trim() || 'Group';
+        create.disabled = true; create.textContent = 'Creating…';
+        try {
+            const created = await opts.onCreate(name, [...selected.keys()]);
+            if (created !== false) m.remove();
+            else { create.disabled = false; create.textContent = 'Create group'; }
+        } catch (e) {
+            console.error('[mayfly] create group', e);
+            toast('Could not create the group.');
+            create.disabled = false; create.textContent = 'Create group';
+        }
+    };
 };
 
 export const createGroupFlow = (prefill = []) => pickFriends('New group', {
     multi: true, prefill,
     onCreate: async (name, ids) => {
         const { data: g, error } = await db.createGroup(name, ids);
-        if (error) return toast('Could not create group');
+        if (error) { console.error('[mayfly] create group', error); toast('Could not create group.'); return false; }
         location.hash = '#/group/' + g.id;
+        return true;
     },
 });
 

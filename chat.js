@@ -157,6 +157,11 @@ export const markSnapDelivered = (id) => { updateSentSnapStatus(id, 'delivered')
 export const markSnapOpened = (id) => { updateSentSnapStatus(id, 'opened'); };
 export const markSnapRemoved = (id) => { setTimeout(() => updateSentSnapStatus(id, 'expired'), 250); };
 const snapReceipt = (e) => `<div class="msgstatus me ${e.snapKind || 'photo'} ${e.status || 'sent'}"${e.snapId ? ` data-snap="${e.snapId}"` : ''}><span class="si"></span><span class="sl">${({ sent: 'Sent', delivered: 'Delivered', opened: 'Opened', expired: 'Expired' })[e.status] || 'Sent'}</span></div>`;
+// Text delivery receipt (blue): a message row is deleted the moment the recipient's
+// device ingests it, so its realtime DELETE tells the sender it was delivered.
+const deliveredMsgIds = new Set();
+export const markMessageDelivered = (id) => { if (!id) return; deliveredMsgIds.add(id); if (openUid) renderThreadBody(openUid); };
+const textReceipt = (delivered) => `<div class="msgstatus me text ${delivered ? 'delivered' : ''}"><span class="si"></span><span class="sl">${delivered ? 'Delivered' : 'Sent'}</span></div>`;
 
 const refreshInbox = async () => {
     const { data } = await db.inbox();
@@ -199,12 +204,13 @@ export const hideConversation = (uid) => {
 // ===================== conversation list =====================
 export const renderConvs = async (box, activeUid) => {
     convBox = box;
-    const [{ data: fr }, { data: activeStories }] = await Promise.all([db.friends(), db.activeStories()]);
+    const [{ data: fr }, { data: activeStories }, { data: viewed }] = await Promise.all([db.friends(), db.activeStories(), db.myViewedStories()]);
     const friends = (fr || []).map(f => f.requester_id === state.me.id ? f.addressee : f.requester).filter(Boolean);
     if (box !== convBox) return;
-    // friends with a live Story → ring their avatar in the list; tapping it plays their Story
+    // friends with an UNWATCHED live Story → ring their avatar; tapping plays the unseen ones
+    const seen = new Set((viewed || []).map(v => v.story_id));
     const storyByUid = new Map();
-    (activeStories || []).forEach(st => { if (st.user_id !== state.me.id) (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
+    (activeStories || []).forEach(st => { if (st.user_id !== state.me.id && !seen.has(st.id)) (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
     // build each conversation's summary
     const rows = (await Promise.all(friends.map(async (u) => {
         const h = await histGet(u.id);
@@ -306,16 +312,13 @@ const renderThreadBody = async (uid) => {
     const h = await histGet(uid);
     // Expire locally tracked receipts after their 24-hour delivery window.
     let dirty = false;
-    h.forEach(e => {
-        if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') {
-            e.status = 'expired'; dirty = true;
-        }
-    });
-    if (dirty) histUpdate(uid, (history) => {
-        history.forEach(e => {
-            if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') e.status = 'expired';
-        });
-    }).catch(() => {});
+    const reconcile = (e) => {
+        if (e.kind === 'snap' && e.expiresAt && e.expiresAt <= Date.now() && e.status !== 'opened' && e.status !== 'expired') { e.status = 'expired'; return true; }
+        if (e.kind === 'text' && e.me && e.msgId && deliveredMsgIds.has(e.msgId) && e.status !== 'delivered') { e.status = 'delivered'; return true; }
+        return false;
+    };
+    h.forEach(e => { if (reconcile(e)) dirty = true; });
+    if (dirty) histUpdate(uid, (history) => { history.forEach(reconcile); }).catch(() => {});
     const snaps = (inboxByUser[uid] || []).filter(s => isAfterClear(uid, new Date(s.created_at).getTime())).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
     body.innerHTML = '';
@@ -329,6 +332,11 @@ const renderThreadBody = async (uid) => {
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
             else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
         }
+    }
+    // one Delivered/Sent receipt under the most recent message, only if it's one you sent
+    const last = items[items.length - 1];
+    if (last && !last.snap && last.entry?.me && last.entry.kind === 'text' && last.entry.msgId) {
+        body.appendChild(el(textReceipt(deliveredMsgIds.has(last.entry.msgId) || last.entry.status === 'delivered')));
     }
     body.scrollTop = body.scrollHeight;
 };
@@ -363,14 +371,15 @@ const sendText = async (uid, username, text, localEntry = null) => {
             return false;
         }
     }
-    const entry = localEntry || { me: true, kind: 'text', text, at: Date.now() };
+    const msgId = crypto.randomUUID();   // so the row's realtime DELETE = "delivered" receipt
+    const entry = localEntry || { me: true, kind: 'text', text, at: Date.now(), msgId, status: 'sent' };
     await histPush(uid, entry);
     if (openUid === uid) appendEntry(entry);
     if (convBox) renderConvs(convBox, uid);
     const pub = await pubOf(uid);
     if (!pub) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
     const enc = await encryptText(pub, text);
-    const { error } = await db.sendMessage({ sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
+    const { error } = await db.sendMessage({ id: msgId, sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
     db.bumpStreak(uid).then(() => {}, () => {});
     return true;

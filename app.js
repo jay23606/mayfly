@@ -5,7 +5,7 @@ import { db } from './db.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, sendStoryReply, bootChat, clearAllLocalConversations } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, bootChat, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
@@ -528,10 +528,11 @@ const playStories = (groups, startGroup = 0) => {
     // start a chat, or jump straight into their own Story if they have one live.
     const openViewerList = async (viewers) => {
         pauseAdvance();
-        const storyByUid = new Map();
+        const storyByUid = new Map();   // viewers with an UNWATCHED live Story → ring their avatar
         try {
-            const { data: act } = await db.activeStories();
-            (act || []).forEach(st => { (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
+            const [{ data: act }, { data: viewed }] = await Promise.all([db.activeStories(), db.myViewedStories()]);
+            const seen = new Set((viewed || []).map(v => v.story_id));
+            (act || []).forEach(st => { if (st.user_id !== state.me.id && !seen.has(st.id)) (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
         } catch (e) {}
         const m = el(`<div class="modal viewerlist"><div class="sheet"><div class="mhead">Viewed by · ${viewers.length}<button class="x icon" aria-label="Close">✕</button></div><div class="mbody"></div></div></div>`);
         const listBody = $('.mbody', m);
@@ -815,6 +816,8 @@ const startRealtime = () => {
       .subscribe();
     sb.channel('mayfly-messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_messages', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onMessageInsert(payload.new))
+      // my sent message was ingested by the recipient (row deleted) → blue "Delivered" receipt
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.id); })
       .subscribe();
     sb.channel('mayfly-friends')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mf_friends' }, () => { if ($('#reqs')) { renderRequests(); renderFriends(); } })

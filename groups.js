@@ -33,6 +33,13 @@ const sendGroupBytes = async (conn, bytes) => {
     }
     return true;
 };
+const autoPlayGroupSnapVideo = (video) => {
+    if (!video) return;
+    video.play().catch(() => {
+        video.muted = true;
+        video.play().catch(() => {});
+    });
+};
 const openGroupMediaViewer = (media) => {
     const video = media.kind === 'video';
     const tag = video ? `<video src="${safeMediaUrl(media.url)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(media.url)}" alt="${esc(media.name || 'image')}">`;
@@ -48,7 +55,7 @@ const openGroupMediaViewer = (media) => {
 const groupMediaBubble = (gp, media, cls, name = '') => {
     const url = safeMediaUrl(media.url);
     const inner = media.kind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
-        : media.kind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
+        : media.kind === 'video' ? `<video class="chatmedia" data-snap="${esc(media.snap ? media.id : '')}" src="${url}" controls playsinline></video>`
         : media.kind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(media.name || 'file')}">📎 ${esc(media.name || 'file')}</a>`;
     const bubble = gLine(gp, `<div class="b ${cls} media">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${inner}${media.caption ? `<div class="snapcaption">${esc(media.caption)}</div>` : ''}</div>`);
@@ -57,6 +64,7 @@ const groupMediaBubble = (gp, media, cls, name = '') => {
         mediaEl.classList.add('expandable');
         mediaEl.title = 'Open larger';
         mediaEl.onclick = () => openGroupMediaViewer(media);
+        if (media.snap && media.kind === 'video') autoPlayGroupSnapVideo(mediaEl);
     }
 };
 const groupSnapCard = (gp, media, cls, name = '') => {

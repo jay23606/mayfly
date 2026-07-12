@@ -244,12 +244,16 @@ const openSnap = async (s, card) => {
             const m = {
                 kind: 'media', me: false, name: video ? 'Video Snap' : 'Photo Snap',
                 mime: snapMime(s), mediaKind: video ? 'video' : 'image',
-                data: await blobToDataURL(blob), caption: s.caption || '', at: new Date(s.created_at).getTime(),
+                data: await blobToDataURL(blob), caption: s.caption || '', snap: true, snapId: s.id,
+                at: new Date(s.created_at).getTime(),
             };
             await histPush(s.sender_id, m);
             if (full.startsWith('blob:')) URL.revokeObjectURL(full);
             await burnSnap(s, card);
-            if (openUid === s.sender_id) await renderThreadBody(s.sender_id);
+            if (openUid === s.sender_id) {
+                await renderThreadBody(s.sender_id);
+                autoPlaySnapVideo($(`video.chatmedia[data-snap="${s.id}"]`, $('#tbody')));
+            }
         } catch (e) {
             console.error('[mayfly] save inline snap', e);
             toast('Could not save this Snap into the chat.');
@@ -294,6 +298,15 @@ const MAX_FILE = 20 * 1024 * 1024;
 const blobToDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
 const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += 16384, i++) { try { dc.send(buf.slice(o, o + 16384)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
+const autoPlaySnapVideo = (video) => {
+    if (!video) return;
+    video.play().catch(() => {
+        // Browsers may require a direct user gesture for sound. Keep the Snap moving
+        // even then, while preserving sound whenever the policy permits it.
+        video.muted = true;
+        video.play().catch(() => {});
+    });
+};
 const openMediaViewer = (m) => {
     const video = m.mediaKind === 'video';
     const tag = video ? `<video src="${safeMediaUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
@@ -312,7 +325,7 @@ const openMediaViewer = (m) => {
 const mediaBubble = (m, cls) => {
     const url = safeMediaUrl(m.data);
     const inner = m.mediaKind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
-        : m.mediaKind === 'video' ? `<video class="chatmedia" src="${url}" controls playsinline></video>`
+        : m.mediaKind === 'video' ? `<video class="chatmedia" data-snap="${esc(m.snapId || '')}" src="${url}" controls playsinline></video>`
         : m.mediaKind === 'audio' ? `<audio src="${url}" controls></audio>`
         : `<a class="chatfile" href="${url}" download="${esc(m.name || 'file')}">📎 ${esc(m.name || 'file')}</a>`;
     const bubble = el(`<div class="b ${cls} media">${inner}${m.caption ? `<div class="snapcaption">${esc(m.caption)}</div>` : ''}</div>`);

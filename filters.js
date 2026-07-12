@@ -67,7 +67,7 @@ const kaleidoscope = (ctx, source) => {
 
 const pixel = (ctx, source) => {
     const { width, height } = ctx.canvas;
-    const small = scratch(Math.max(28, Math.round(width / 60)), Math.max(28, Math.round(height / 60)));
+    const small = scratch(Math.max(40, Math.round(width / 11)), Math.max(40, Math.round(height / 11)));
     const smallCtx = small.getContext('2d'); drawBase(smallCtx, source);
     const image = smallCtx.getImageData(0, 0, small.width, small.height), data = image.data;
     for (let i = 0; i < data.length; i += 4) for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] / 51) * 51;

@@ -86,6 +86,7 @@ const db = {
     }),
     activeStories: () => sb.from('mf_stories').select('*, author:user_id(' + PROF + ')')
         .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true }),
+    storyById: (id) => sb.from('mf_stories').select('id, preview, caption').eq('id', id).maybeSingle(),
     // Keep only active rows when reconciling device-only full images. Expired stories
     // stay invisible even before a server-side cleanup job removes their metadata.
     myStories: () => sb.from('mf_stories').select('id').eq('user_id', state.me.id)

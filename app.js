@@ -412,7 +412,8 @@ const playStories = (groups, startGroup = 0) => {
         <div class="viewers"></div></div>`);
     document.body.appendChild(ov);
     const img = $('img', ov), segs = $('.segs', ov), more = $('.storymore', ov), menu = $('.storymenu', ov), reply = $('.storyreply', ov);
-    const close = () => { closed = true; clearTimeout(timerId); document.removeEventListener('keydown', onKeydown); ov.remove(); };
+    let ownStoryUrl = null;
+    const close = () => { closed = true; clearTimeout(timerId); if (ownStoryUrl) URL.revokeObjectURL(ownStoryUrl); document.removeEventListener('keydown', onKeydown); ov.remove(); };
     const setGroup = (nextGroup, atEnd = false) => {
         groupIndex = nextGroup;
         ({ items, mine } = groups[groupIndex]);
@@ -421,6 +422,7 @@ const playStories = (groups, startGroup = 0) => {
     };
     const show = async (k) => {
         clearTimeout(timerId);
+        if (ownStoryUrl) { URL.revokeObjectURL(ownStoryUrl); ownStoryUrl = null; }
         if (k < 0) return groupIndex > 0 ? setGroup(groupIndex - 1, true) : show(0);
         if (k >= items.length) return groupIndex < groups.length - 1 ? setGroup(groupIndex + 1) : close();
         i = k;
@@ -439,6 +441,7 @@ const playStories = (groups, startGroup = 0) => {
         const shownGroup = groupIndex;
         let full = mine ? await idb.get('story:' + s.id) : await fetchSnap(s.id, s.user_id);
         if (closed || shownGroup !== groupIndex || i !== k) return;
+        if (mine && full instanceof Blob) { ownStoryUrl = URL.createObjectURL(full); full = ownStoryUrl; }
         if (full) { img.src = safeMediaUrl(full); img.style.filter = 'none'; }
         if (mine) showViewers(s.id);
         // advance the current segment bar, then move on
@@ -463,7 +466,7 @@ const playStories = (groups, startGroup = 0) => {
         const text = $('input', reply).value.trim(), s = items[i];
         if (!text || mine || !s?.user_id) return;
         const send = $('button', reply); send.disabled = true;
-        const sent = await sendStoryReply(s.user_id, s.author?.username || 'Story author', text);
+        const sent = await sendStoryReply(s.user_id, s.author?.username || 'Story author', text, s);
         if (sent) { $('input', reply).value = ''; toast('Story reply sent.'); }
         send.disabled = false;
     };

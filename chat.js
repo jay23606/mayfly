@@ -50,6 +50,7 @@ const lastLine = (h) => {
     if (!h || !h.length) return '';
     const m = h[h.length - 1];
     return m.kind === 'text' ? (m.me ? 'You: ' : '') + m.text
+        : m.kind === 'story-reply' ? (m.me ? 'You: ' : '') + 'Story reply'
         : m.kind === 'snap' ? '📷 You sent a Snap'
         : m.kind === 'media' ? (m.me ? 'You: ' : '') + '📎 ' + (m.name || m.mediaKind || 'attachment') : '';
 };
@@ -68,12 +69,23 @@ export const syncMessages = async () => {
     if (convBox) renderConvs(convBox, openUid);
     onChange();
 };
+const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPreview = null) => {
+    try {
+        const p = JSON.parse(text);
+        if (p?.t !== 'story-reply' || typeof p.storyId !== 'string' || typeof p.text !== 'string') return null;
+        let preview = localPreview;
+        if (!preview) { const { data } = await db.storyById(p.storyId); preview = data?.preview || null; }
+        return { me, kind: 'story-reply', text: p.text, storyId: p.storyId, preview, at };
+    } catch (e) { return null; }
+};
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return; }
-    await histPush(row.sender_id, { me: false, kind: 'text', text, at: new Date(row.created_at).getTime() });
+    const at = new Date(row.created_at).getTime();
+    const entry = await storyReplyFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+    await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
-    if (openUid === row.sender_id) appendBubble(text, 'them');
+    if (openUid === row.sender_id) appendEntry(entry);
     else { unreadMsg.add(row.sender_id); if (window.Notification?.permission === 'granted') new Notification('mayfly 🐛', { body: 'New message' }); }
 };
 // realtime INSERT handler (from app.js)
@@ -222,6 +234,7 @@ const renderThreadBody = async (uid) => {
         else {
             const e = it.entry;
             if (e.kind === 'text') body.appendChild(el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
+            else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
             else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
         }
@@ -236,10 +249,18 @@ const snapCard = (s) => {
     return card;
 };
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
+const storyReplyBubble = (e) => {
+    const preview = e.preview ? `<img src="${safeMediaUrl(e.preview)}" alt="Story preview">` : '';
+    return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg">${preview}<div class="storyreplylabel">↩ Story reply</div><div>${esc(e.text)}</div></div>`);
+};
+const appendEntry = (e) => {
+    if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
+    else appendBubble(e.text, e.me ? 'me' : 'them');
+};
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 
 // ---- send an async encrypted text ----
-const sendText = async (uid, username, text) => {
+const sendText = async (uid, username, text, localEntry = null) => {
     text = text.slice(0, MSG_MAX);   // hard size cap (backstop to the input maxlength)
     // Cap how many undelivered messages can queue up for a friend who's offline.
     if (!isOnline(uid)) {
@@ -250,8 +271,9 @@ const sendText = async (uid, username, text) => {
             return false;
         }
     }
-    await histPush(uid, { me: true, kind: 'text', text, at: Date.now() });
-    if (openUid === uid) appendBubble(text, 'me');
+    const entry = localEntry || { me: true, kind: 'text', text, at: Date.now() };
+    await histPush(uid, entry);
+    if (openUid === uid) appendEntry(entry);
     if (convBox) renderConvs(convBox, uid);
     const pub = await pubOf(uid);
     if (!pub) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
@@ -261,7 +283,10 @@ const sendText = async (uid, username, text) => {
     db.bumpStreak(uid);
     return true;
 };
-export const sendStoryReply = (uid, username, text) => sendText(uid, username, `↩ Story reply: ${text}`);
+export const sendStoryReply = async (uid, username, text, story) => {
+    const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text });
+    return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, at: Date.now() });
+};
 
 // ===================== snap opening =====================
 const openSnap = async (s, card) => {

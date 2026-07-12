@@ -524,10 +524,38 @@ const playStories = (groups, startGroup = 0) => {
         advanceRemaining = 5000;
         resumeAdvance();
     };
+    // A tappable list of everyone who viewed this Story, each with quick actions:
+    // start a chat, or jump straight into their own Story if they have one live.
+    const openViewerList = async (viewers) => {
+        pauseAdvance();
+        const storyByUid = new Map();
+        try {
+            const { data: act } = await db.activeStories();
+            (act || []).forEach(st => { (storyByUid.get(st.user_id) || storyByUid.set(st.user_id, []).get(st.user_id)).push(st); });
+        } catch (e) {}
+        const m = el(`<div class="modal viewerlist"><div class="sheet"><div class="mhead">Viewed by · ${viewers.length}<button class="x icon" aria-label="Close">✕</button></div><div class="mbody"></div></div></div>`);
+        const listBody = $('.mbody', m);
+        if (!viewers.length) listBody.innerHTML = `<div class="empty">No views yet.</div>`;
+        viewers.forEach(v => {
+            const u = v.viewer; if (!u) return;
+            const theirStory = storyByUid.get(u.id);
+            const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b><div class="sub">${esc(ago(v.viewed_at))}</div></div><div class="acts">${theirStory ? '<button class="pill vstory">Story</button>' : ''}<button class="pill primary vchat">Chat</button></div></div>`);
+            $('.vchat', row).onclick = () => { m.remove(); close(); location.hash = '#/c/' + u.id; };
+            if (theirStory) $('.vstory', row).onclick = () => { m.remove(); close(); playStories([{ items: theirStory, mine: false }], 0); };
+            listBody.appendChild(row);
+        });
+        const dismiss = () => { m.remove(); resumeAdvance(); };
+        $('.x', m).onclick = dismiss;
+        m.onclick = (e) => { if (e.target === m) dismiss(); };
+        document.body.appendChild(m);
+    };
     const showViewers = async (id) => {
         const { data } = await db.storyViewers(id);
+        const viewers = data || [];
         const box = $('.viewers', ov);
-        box.textContent = `👁 ${(data || []).length}` + ((data || []).length ? ' · ' + data.slice(0, 3).map(v => v.viewer?.username).filter(Boolean).join(', ') : '');
+        box.innerHTML = `👁 ${viewers.length}` + (viewers.length ? ' · ' + viewers.slice(0, 3).map(v => esc(v.viewer?.username || '')).filter(Boolean).join(', ') : '');
+        box.classList.toggle('tappable', viewers.length > 0);
+        box.onclick = (e) => { e.stopPropagation(); if (viewers.length) openViewerList(viewers); };
     };
     const onKeydown = (e) => {
         if (e.key === 'Escape') close();

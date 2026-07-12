@@ -413,7 +413,9 @@ const playStories = (groups, startGroup = 0) => {
         const s = items[k];
         $('.pname', ov).textContent = (s.author?.username) || (mine ? 'You' : '');
         $('.pcap', ov).textContent = s.caption || '';
-        img.style.filter = 'blur(14px)'; img.src = safeMediaUrl(s.preview);
+        // The database-backed Story preview is intentionally size-bounded, but it
+        // should remain readable when the author is offline.
+        img.style.filter = 'none'; img.src = safeMediaUrl(s.preview);
         if (!mine) db.viewStory(s.id);
         // pull the full image P2P (from our own IndexedDB if it's ours)
         const shownGroup = groupIndex;

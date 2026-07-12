@@ -66,7 +66,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
     stopStream();
     app.innerHTML = `<main class="camwrap">
       <div class="viewport">
-        <video id="cam" autoplay playsinline muted></video>
+        <video id="cam" autoplay playsinline muted disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video>
         <div class="camerr" id="camerr"></div>
       </div>
       <div class="cambar">

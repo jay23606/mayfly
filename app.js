@@ -685,9 +685,9 @@ const renderDiscover = async (q) => {
     if (!list.length) return void (box.innerHTML = `<div class="empty">${q ? 'No one matched that.' : 'No new people to add right now.'}</div>`);
     list.forEach(p => {
         const row = el(`<div class="urow" data-uid="${p.id}">${avatarHTML(p.username, p.avatar)}
-            <div class="who"><b>${esc(p.username)}</b>${isOnline(p.id) ? '<div class="sub"><i class="dot"></i>online</div>' : ''}</div>
-            <div class="acts"><button class="pill profilebtn">Profile</button><button class="pill primary addbtn">Add</button><button class="pill hidebtn" aria-label="Hide">✕</button></div></div>`);
-        $('.profilebtn', row).onclick = () => { location.hash = '#/profile/' + p.id; };
+            <div class="who"><button class="profilelink">${esc(p.username)}</button>${isOnline(p.id) ? '<div class="sub"><i class="dot"></i>online</div>' : ''}</div>
+            <div class="acts"><button class="pill primary addbtn">Add</button><button class="pill hidebtn" aria-label="Hide">✕</button></div></div>`);
+        $('.profilelink', row).onclick = () => { location.hash = '#/profile/' + p.id; };
         $('.addbtn', row).onclick = async () => {
             const b = $('.addbtn', row); b.disabled = true;
             const { error } = await db.sendRequest(p.id);
@@ -726,10 +726,10 @@ const renderFriends = async () => {
     friends.forEach(u => {
         const streak = streakMap[pairKey(state.me.id, u.id)] || 0;
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}
-            <div class="who"><b>${esc(u.username)}</b>
+            <div class="who"><button class="profilelink">${esc(u.username)}</button>
               <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
-            <div class="acts"><button class="pill profilebtn">Profile</button><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
-        $('.profilebtn', row).onclick = () => { location.hash = '#/profile/' + u.id; };
+            <div class="acts"><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
+        $('.profilelink', row).onclick = () => { location.hash = '#/profile/' + u.id; };
         $('.snapbtn', row).onclick = () => { location.hash = '#/snap/' + u.id; };
         box.appendChild(row);
     });

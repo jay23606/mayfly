@@ -75,6 +75,17 @@ const autoPlayGroupSnapVideo = (video) => {
     if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) play();
     else video.addEventListener('canplay', play, { once: true });
 };
+const pinGroupAfterMediaLoads = (media) => {
+    if (!media) return;
+    const pin = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+        const log = media.closest('.chatlog');
+        if (log) log.scrollTop = log.scrollHeight;
+    }));
+    media.addEventListener('load', pin, { once: true });
+    media.addEventListener('loadedmetadata', pin, { once: true });
+    media.addEventListener('canplay', pin, { once: true });
+    if (media instanceof HTMLImageElement && media.complete) pin();
+};
 const openGroupMediaViewer = (media, inlinePlayer = null) => {
     const video = media.kind === 'video';
     const reusePlayer = video && inlinePlayer;
@@ -105,6 +116,7 @@ const groupMediaBubble = (gp, media, cls, name = '') => {
         mediaEl.classList.add('expandable');
         mediaEl.title = 'Open larger';
         mediaEl.onclick = () => { if (!mediaEl.closest('.media-viewer')) openGroupMediaViewer(media, mediaEl); };
+        pinGroupAfterMediaLoads(mediaEl);
         if (media.snap && media.kind === 'video') autoPlayGroupSnapVideo(mediaEl);
     }
 };

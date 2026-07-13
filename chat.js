@@ -501,6 +501,20 @@ const autoPlaySnapVideo = (video) => {
     if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) play();
     else video.addEventListener('canplay', play, { once: true });
 };
+// A chat bubble is inserted before an image/video knows its final dimensions.
+// Scroll again after metadata arrives, otherwise tall mobile media expands below
+// the visible end of the thread and makes the recipient scroll manually.
+const pinThreadAfterMediaLoads = (media) => {
+    if (!media) return;
+    const pin = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+        const body = media.closest('.tbody');
+        if (body) body.scrollTop = body.scrollHeight;
+    }));
+    media.addEventListener('load', pin, { once: true });
+    media.addEventListener('loadedmetadata', pin, { once: true });
+    media.addEventListener('canplay', pin, { once: true });
+    if (media instanceof HTMLImageElement && media.complete) pin();
+};
 const openMediaViewer = (m, inlinePlayer = null) => {
     const video = m.mediaKind === 'video';
     const reusePlayer = video && inlinePlayer;
@@ -531,6 +545,7 @@ const mediaBubble = (m, cls) => {
         media.classList.add('expandable');
         media.title = 'Open larger';
         media.onclick = () => { if (!media.closest('.media-viewer')) openMediaViewer(m, media); };
+        pinThreadAfterMediaLoads(media);
     }
     return bubble;
 };

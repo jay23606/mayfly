@@ -358,8 +358,10 @@ export const openConversation = async (box, uid) => {
 };
 
 // Merge local history + unopened snap cards into one chronological timeline.
-const renderThreadBody = async (uid) => {
+const closeMessageMenus = (except = null) => document.querySelectorAll('.messagemenu:not([hidden])').forEach(menu => { if (menu !== except) menu.hidden = true; });
+const renderThreadBody = async (uid, preserveScroll = false) => {
     const body = $('#tbody'); if (!body || openUid !== uid) return;
+    const scrollTop = body.scrollTop;
     const h = await histGet(uid);
     // Expire locally tracked receipts after their 24-hour delivery window.
     let dirty = false;
@@ -393,7 +395,8 @@ const renderThreadBody = async (uid) => {
     if (last && !last.snap && last.entry?.me && last.entry.kind === 'text' && last.entry.msgId) {
         body.appendChild(el(textReceipt(deliveredMsgIds.has(last.entry.msgId) || last.entry.status === 'delivered')));
     }
-    body.scrollTop = body.scrollHeight;
+    body.onclick = (event) => { if (!event.target.closest('.messagemenu, .messagemore')) closeMessageMenus(); };
+    body.scrollTop = preserveScroll ? Math.min(scrollTop, body.scrollHeight) : body.scrollHeight;
 };
 const snapCard = (s) => {
     const kind = snapKind(s), label = kind === 'video' ? 'Video Snap' : 'Photo Snap';
@@ -404,16 +407,19 @@ const snapCard = (s) => {
 };
 const updateLocalEntry = async (uid, localId, update) => {
     await histUpdate(uid, (history) => { const entry = history.find(x => x.localId === localId); if (entry) update(entry, history); });
-    if (openUid === uid) renderThreadBody(uid);
+    if (openUid === uid) renderThreadBody(uid, true);
 };
 const textBubble = (uid, e) => {
     const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
     const reaction = e.reaction ? `<span class="localreaction">${esc(e.reaction)}</span>` : '';
     const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="b ${e.me ? 'me' : 'them'} ${e.saved ? 'saved' : ''}">${reply}${esc(e.text)}${reaction}</div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 18)}</button><button data-action="love" aria-label="Like" title="Like">${icon('heart', 18)}</button><button data-action="react" aria-label="Thumbs up" title="Thumbs up">${icon('thumbsUp', 18)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 18)}</button><button data-action="delete" aria-label="Delete from this device" title="Delete from this device">${icon('trash', 18)}</button></div></div>`);
     const menu = card.querySelector('.messagemenu');
-    card.querySelector('.messagemore').onclick = () => { menu.hidden = !menu.hidden; };
+    card.querySelector('.messagemore').onclick = (event) => {
+        event.stopPropagation(); const opening = menu.hidden; closeMessageMenus(menu); menu.hidden = !opening;
+    };
     menu.onclick = async (event) => {
-        const action = event.target.dataset.action; if (!action) return;
+        const action = event.target.closest?.('[data-action]')?.dataset.action; if (!action) return;
+        event.stopPropagation(); menu.hidden = true;
         if (action === 'reply') { setReplyDraft(e); return; }
         if (action === 'react' || action === 'love') await updateLocalEntry(uid, e.localId, entry => { entry.reaction = action === 'react' ? '👍' : '♥'; });
         if (action === 'save') await updateLocalEntry(uid, e.localId, entry => { entry.saved = !entry.saved; });

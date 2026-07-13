@@ -364,7 +364,7 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .thead .who{flex:1;min-width:0}
 .thead .back{font-size:26px}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
-.tbody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:6px}
+.tbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:6px}
 .threadhint{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
 .snapcard{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
 .snapcard.photo{border-color:#ff3b5c;background:#ff3b5c18}

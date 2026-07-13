@@ -807,7 +807,7 @@ const wireCallMedia = (c) => {
         // browsers that do not restart a video after its srcObject changes.
         renderCallViews();
         clearTimeout(callStatusTimer); callStatusTimer = null;
-        setStat($('#callo').classList.contains('voice') ? callPeerName : '');
+        setStat(callPeerName);
     });
     c.on('state', ({ connection, ice }) => {
         if (connection === 'connected' || ice === 'connected' || ice === 'completed') {

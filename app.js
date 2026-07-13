@@ -761,7 +761,7 @@ const viewMe = () => {
       <button class="btn" id="msave">Save</button>
       <button class="pill" id="mmemories">Memories</button>
       <div class="settingrow"><div><b>Notifications</b><div class="muted tiny" id="pushstatus"></div></div><label class="switch"><input id="pushtoggle" type="checkbox"><span></span></label></div>
-      ${isAdmin ? `<section class="adminpanel"><b>Admin · remove account</b><p class="muted tiny">Search a Mayfly user, then remove their account and server-side data.</p><input class="field" id="adminusersearch" placeholder="Find a user" autocomplete="off"><div id="adminuserresults" class="adminresults"></div></section>` : ''}
+      ${isAdmin ? `<section class="adminpanel"><b>Admin tools</b><p class="muted tiny">Search a Mayfly user to manage profile privacy or remove their account.</p><input class="field" id="adminusersearch" placeholder="Find a user" autocomplete="off"><div id="adminuserresults" class="adminresults"></div></section>` : ''}
       <button class="btn ghost" id="mout">Log out</button>
       <p class="muted tiny">mayfly 🐛 — snaps vanish after they're opened. Full photos are never stored on our server: they stream peer-to-peer when your friend is online, or are end-to-end encrypted when they're not.</p>
     </main>`;
@@ -826,23 +826,27 @@ const viewMe = () => {
             if (!users.length) { results.innerHTML = `<div class="muted tiny">No matching users.</div>`; return; }
             results.innerHTML = '';
             users.forEach((u) => {
-                const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b><div class="sub privacylabel">${u.privacy_locked ? 'Forced private' : (u.profile_private ? 'Private' : 'Public')}</div></div><div class="acts"><button class="pill forceprivacy">${u.privacy_locked ? 'Unlock privacy' : 'Force private'}</button><button class="pill danger removeuser">Remove</button></div></div>`);
-                $('.forceprivacy', row).onclick = async () => {
-                    const forcePrivate = !u.privacy_locked;
-                    if (!confirm(forcePrivate ? `Force ${u.username}'s profile private and prevent them from adding people?` : `Remove the forced privacy lock for ${u.username}?`)) return;
-                    const button = $('.forceprivacy', row); button.disabled = true;
-                    const { error: privacyError } = await db.adminSetProfilePrivacy(u.id, forcePrivate);
-                    if (privacyError) { button.disabled = false; return toast('Could not update profile privacy.'); }
-                    u.profile_private = forcePrivate; u.privacy_locked = forcePrivate;
-                    button.textContent = forcePrivate ? 'Unlock privacy' : 'Force private'; button.disabled = false;
-                    $('.privacylabel', row).textContent = forcePrivate ? 'Forced private' : 'Public';
-                    toast(forcePrivate ? `${u.username} is now forced private.` : `Privacy lock removed for ${u.username}.`);
-                };
-                $('.removeuser', row).onclick = async () => {
+                const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b><div class="sub privacylabel">${u.privacy_locked ? 'Forced private' : (u.profile_private ? 'Private' : 'Public')}</div></div><select class="adminactions" aria-label="Manage ${esc(u.username)}"><option value="">Manage</option><option value="privacy">${u.privacy_locked ? 'Unlock privacy' : 'Force private'}</option><option value="remove">Remove account</option></select></div>`);
+                const actions = $('.adminactions', row);
+                actions.onchange = async () => {
+                    const action = actions.value; actions.value = '';
+                    if (!action) return;
+                    if (action === 'privacy') {
+                        const forcePrivate = !u.privacy_locked;
+                        if (!confirm(forcePrivate ? `Force ${u.username}'s profile private and prevent them from adding people?` : `Remove the forced privacy lock for ${u.username}?`)) return;
+                        actions.disabled = true;
+                        const { error: privacyError } = await db.adminSetProfilePrivacy(u.id, forcePrivate);
+                        actions.disabled = false;
+                        if (privacyError) return toast('Could not update profile privacy.');
+                        u.profile_private = forcePrivate; u.privacy_locked = forcePrivate;
+                        actions.querySelector('option[value="privacy"]').textContent = forcePrivate ? 'Unlock privacy' : 'Force private';
+                        $('.privacylabel', row).textContent = forcePrivate ? 'Forced private' : 'Public';
+                        return toast(forcePrivate ? `${u.username} is now forced private.` : `Privacy lock removed for ${u.username}.`);
+                    }
                     if (!confirm(`Remove ${u.username} from Mayfly and delete their server-side data? This cannot be undone.`)) return;
-                    const button = $('.removeuser', row); button.disabled = true; button.textContent = 'Removing…';
+                    actions.disabled = true;
                     const { error: removeError } = await db.adminDeleteUser(u.id);
-                    if (removeError) { button.disabled = false; button.textContent = 'Remove'; return toast('Could not remove that account.'); }
+                    if (removeError) { actions.disabled = false; return toast('Could not remove that account.'); }
                     row.remove(); toast(`${u.username} was removed.`);
                     if (!results.children.length) results.innerHTML = `<div class="muted tiny">No matching users.</div>`;
                 };

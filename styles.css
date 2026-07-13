@@ -250,7 +250,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 #rv{display:block;width:100%;height:100%;object-fit:contain;background:#000}
 #lv{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));width:clamp(96px,26vw,200px);aspect-ratio:3/4;height:auto;object-fit:contain;background:#111;border-radius:14px;border:2px solid #ffffff66;cursor:pointer;box-shadow:0 5px 18px #0009}
 #lv:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
-.cstat{position:absolute;left:0;right:0;top:40%;text-align:center;color:#fff;font-size:16px;text-shadow:0 1px 6px #000}
+.cstat{position:absolute;left:12px;right:12px;top:max(14px,env(safe-area-inset-top));text-align:center;color:#fff;font-size:16px;text-shadow:0 1px 6px #000}
 .cbar{position:absolute;z-index:2;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:clamp(10px,5vw,22px);padding:34px 0 calc(18px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#000b 55%)}
 .cbar button{width:clamp(48px,14vw,60px);height:clamp(48px,14vw,60px);border-radius:50%;border:0;background:#ffffff1c;color:#fff;cursor:pointer}
 .cbar .hang{background:#ff3b5c;color:#fff}

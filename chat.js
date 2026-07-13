@@ -696,7 +696,7 @@ const wire = (uid, conn) => {
     conn.on('open', () => { try { conn.send({ t: 'cap' }); } catch (e) {} if (uid === callPeerId) flushCallApps(uid); });
     conn.on('data', (d) => {
         if (!d) return;
-        if (d.t === 'call-app') { if (uid === callPeerId) receiveCallApp(d.payload); return; }
+        if (d.t === 'call-app') { if (!callPeerId || uid === callPeerId) receiveCallApp(d.payload); return; }
         if (d.t === 'typing') { const el2 = $('#ctyping'); if (el2 && openUid === uid) el2.textContent = 'typing…'; return; }
         if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
         if (d.t === 'file-meta') { binRx = { meta: d, chunks: [] }; return; }
@@ -844,7 +844,7 @@ export const onIncomingCall = (incoming) => {
     </div>`;
     banner.classList.add('on');
     const clear = () => banner.classList.remove('on');
-    $('#dec', banner).onclick = () => { clear(); try { incoming.close(); } catch (e) {} };
+    $('#dec', banner).onclick = () => { clear(); unmountCallApps(); try { incoming.close(); } catch (e) {} };
     $('#acc', banner).onclick = async () => {
         clear();
         cameraFacing = 'user';

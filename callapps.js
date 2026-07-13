@@ -8,7 +8,7 @@ const ACTIVITIES = [
     ['trivia', 'Trivia'], ['icebreakers', 'Icebreakers'], ['stack', 'Stack'], ['tetris', 'Tetris'],
 ];
 const labels = new Map(ACTIVITIES);
-const apps = new Map(), loading = new Map(), inbox = [];
+const apps = new Map(), loading = new Map(), inbox = [], pendingControls = [];
 let root = null, stage = null, picker = null, send = null, amCaller = false, active = null, mounted = null;
 
 const styleFor = (path, id) => {
@@ -45,7 +45,9 @@ const deliver = (id, msg) => {
     try { apps.get(id)?.onData?.(msg); } catch (e) {}
 };
 const flush = (id) => {
-    for (let i = inbox.length - 1; i >= 0; i--) if (inbox[i].id === id) deliver(id, inbox.splice(i, 1)[0].msg);
+    const queued = inbox.filter(item => item.id === id);
+    for (let i = inbox.length - 1; i >= 0; i--) if (inbox[i].id === id) inbox.splice(i, 1);
+    queued.forEach(item => deliver(id, item.msg));
 };
 const open = async (id, broadcast) => {
     if (!labels.has(id) || !stage) return;
@@ -75,15 +77,17 @@ export const mountCallApps = (container, opts) => {
     stage = root.querySelector('.callappstage'); picker = root.querySelector('select');
     picker.onchange = () => picker.value ? open(picker.value, true) : close(true);
     root.querySelector('.callappclose').onclick = () => close(true);
+    pendingControls.splice(0).forEach(receiveCallApp);
 };
 export const unmountCallApps = () => {
-    clearStage(); active = null; inbox.length = 0;
+    clearStage(); active = null; inbox.length = 0; pendingControls.length = 0;
     if (root) root.innerHTML = '';
     root = stage = picker = send = null;
 };
 export const toggleCallApps = () => root?.classList.toggle('menuopen');
 export const receiveCallApp = (payload) => {
     if (!payload) return;
+    if (!stage && payload.k === 'host') { pendingControls.push(payload); return; }
     if (payload.k === 'host') { if (payload.t === 'open') open(payload.id, false); else if (payload.t === 'close') close(false); return; }
     if (payload.k === 'app' && typeof payload.id === 'string') deliver(payload.id, payload.msg);
 };

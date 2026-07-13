@@ -38,18 +38,16 @@ export const viewMemories = async (useMemory = null) => {
         const blob = await idb.get(PREFIX + item.id);
         if (!(blob instanceof Blob)) continue;
         const url = URL.createObjectURL(blob); urls.push(url);
-        const card = el(`<article class="memorycard"><button class="memorydelete" aria-label="Delete memory" title="Delete memory">×</button>${item.kind === 'video' ? `<video src="${safeMediaUrl(url)}" muted playsinline preload="metadata"></video><span class="memoryplay">▶</span>` : `<img src="${safeMediaUrl(url)}" alt="Saved Memory">`}<div class="memorymeta"><span>${new Date(item.createdAt).toLocaleDateString()}</span>${item.caption ? `<b>${esc(item.caption)}</b>` : ''}<div class="memoryactions"><button data-use="send">Send</button><button data-use="story">Story</button></div></div></article>`);
-        if (item.kind === 'video') card.querySelector('video').onclick = () => { const video = card.querySelector('video'); video.paused ? video.play() : video.pause(); };
+        const card = el(`<article class="memorycard" role="button" tabindex="0" aria-label="Send saved Memory">${item.kind === 'video' ? `<video src="${safeMediaUrl(url)}" muted playsinline preload="metadata"></video><span class="memoryplay">▶</span>` : `<img src="${safeMediaUrl(url)}" alt="Saved Memory">`}<button class="memorydelete" aria-label="Delete memory" title="Delete memory">×</button><div class="memorymeta"><span>${new Date(item.createdAt).toLocaleDateString()}</span>${item.caption ? `<b>${esc(item.caption)}</b>` : ''}</div></article>`);
         card.querySelector('.memorydelete').onclick = async () => {
             if (!confirm('Delete this Memory from this browser?')) return;
             await idb.del(PREFIX + item.id); await writeIndex((await readIndex()).filter(x => x.id !== item.id));
             URL.revokeObjectURL(url); card.remove();
             if (!box.children.length) box.innerHTML = '<div class="empty">No Memories yet.</div>';
         };
-        card.querySelector('.memoryactions').onclick = async (event) => {
-            const action = event.target.dataset.use; if (!action || !useMemory) return;
-            event.stopPropagation(); await useMemory(item, blob, action === 'story');
-        };
+        const openComposer = async () => { if (useMemory) await useMemory(item, blob, false); };
+        card.onclick = (event) => { if (!event.target.closest('.memorydelete')) openComposer(); };
+        card.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openComposer(); } };
         box.appendChild(card);
     }
     releaseUrls = () => urls.forEach(URL.revokeObjectURL);

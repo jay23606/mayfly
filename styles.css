@@ -42,6 +42,17 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
   background:var(--panel2);font-size:14px;font-weight:700;color:var(--text);margin:0 auto}
 .navavatar img{width:100%;height:100%;object-fit:cover}
 
+/* ---------- Clips ---------- */
+.clipswrap{max-width:560px;padding-top:0}
+.cliptop{display:flex;align-items:center;justify-content:space-between;margin:4px 4px 10px}
+.cliptop h3{margin:0;font-size:22px}.cliptop p,.clipnote{margin:2px 0 0;color:var(--muted);font-size:12px}
+.clipreload{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:8px 12px;cursor:pointer;font:inherit;font-size:13px}
+.clipstage{position:relative;height:min(68vh,720px);min-height:420px;border-radius:24px;overflow:hidden;background:#000;touch-action:pan-x;isolation:isolate}
+.clipplayer{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:none}
+.clipmeta{position:absolute;z-index:2;left:0;right:0;bottom:0;display:grid;gap:2px;padding:52px 16px 16px;background:linear-gradient(transparent,#000d);pointer-events:none}
+.clipmeta b{font-size:16px}.clipmeta span,.clipmeta small{color:#ddd;font-size:13px}.clipmeta small{color:#aaa}
+.clipnote{text-align:center;padding:8px 4px}
+
 /* ---------- avatars / rows ---------- */
 .avatar{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;overflow:hidden;flex:none;
   background:var(--panel2);font-weight:700;color:var(--text)}
@@ -391,6 +402,8 @@ main.chats.showthread .threadpane{display:flex}
   header{top:calc(var(--tab-h) + env(safe-area-inset-top));margin-top:calc(var(--tab-h) + env(safe-area-inset-top))}
   main{padding-bottom:20px}
   .camwrap{height:calc(var(--app-vh, 100dvh) - var(--tab-h) - 56px - env(safe-area-inset-top));padding-bottom:0}
+  .clipswrap{padding-top:calc(var(--tab-h) + env(safe-area-inset-top) + 8px)}
+  .clipstage{height:calc(var(--app-vh, 100dvh) - var(--tab-h) - 138px - env(safe-area-inset-top));min-height:360px}
   body.inchat main.chats{height:var(--app-vh, 100dvh);padding-top:calc(var(--tab-h) + env(safe-area-inset-top))}
   .toast{bottom:calc(20px + env(safe-area-inset-bottom))}
 }

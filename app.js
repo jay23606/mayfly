@@ -8,6 +8,7 @@ import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
+import { viewClips, closeClips } from './clips.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
@@ -814,6 +815,7 @@ const tabbar = () => `<nav id="tabbar" aria-label="Primary">
     <button class="tab" data-go="#/chats" aria-label="Chats">💬<span class="badge-count" id="chatdot"></span></button>
     <button class="tab" data-go="#/friends" aria-label="Friends">👥</button>
     <button class="tab cam" data-go="#/camera" aria-label="Camera">◉</button>
+    <button class="tab" data-go="#/clips" aria-label="Clips">▶</button>
     <button class="tab" data-go="#/me" aria-label="You">${isMediaUrl(state.profile.avatar) ? `<span class="navavatar"><img src="${state.profile.avatar}" alt=""></span>` : `<span class="navavatar">${initial(state.profile.username)}</span>`}</button>
   </nav>`;
 const header = () => `<header><span class="logo" data-go="#/chats">mayfly 🐛</span></header>`;
@@ -822,7 +824,7 @@ const mountChrome = (force) => {
     if (force) document.body.querySelectorAll('header, #tabbar').forEach(n => n.remove());
     if (!$('header')) document.body.insertAdjacentElement('afterbegin', el(header()));
     if (!$('#tabbar')) document.body.appendChild(el(tabbar()));
-    const seg = (location.hash.slice(2) || '').split('/')[0];   // 'chats' | 'c' | 'friends' | 'me' | ''
+    const seg = (location.hash.slice(2) || '').split('/')[0];
     // Chat views reclaim the top: hide the app header so the sidebar + thread fill the screen.
     document.body.classList.toggle('inchat', seg === '' || seg === 'chats' || seg === 'c' || seg === 'group');
     const activeGo = (seg === '' || seg === 'c' || seg === 'group') ? '#/chats' : ((seg === 'snap' || seg === 'groupsnap') ? '#/camera' : ('#/' + seg));
@@ -837,10 +839,12 @@ const route = () => {
     cameraInputCleanup();
     detachAll();               // leaving a conversation → background msgs go to notifications
     closeCurrentGroup();        // leaving a group view → tear its channel/call down
+    closeClips();
     mountChrome();
     if (seg === 'chats') return viewChats();
     if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
+    if (seg === 'clips') return viewClips();
     if (seg === 'camera') return viewCamera();
     if (seg === 'snap' && arg) return viewCamera(arg);
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);

@@ -9,6 +9,7 @@ import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 import { viewClips, closeClips } from './clips.js';
+import { saveMemory, viewMemories, closeMemories } from './memories.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
@@ -227,6 +228,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
         <button class="retake" id="retake" aria-label="Retake">✕</button>
       </div>
       <div class="sendrow">
+        <button class="pill" id="savememory" type="button">Save to Memories</button>
         <div class="sendto">Send to…</div>
         <input id="recipsearch" class="recipsearch" type="search" placeholder="Search friends" autocomplete="off" aria-label="Search friends">
         <div id="recipmeta" class="recipmeta"></div>
@@ -235,6 +237,11 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
       </div>
     </main>`;
     $('#retake').onclick = () => { releasePreview(); viewCamera(defaultRecipientId); };
+    $('#savememory').onclick = async () => {
+        const button = $('#savememory'); button.disabled = true; button.textContent = 'Saving…';
+        try { await saveMemory(shot, $('#cap').value); button.textContent = 'Saved to Memories'; toast('Saved only in this browser.'); }
+        catch (e) { button.disabled = false; button.textContent = 'Save to Memories'; toast('Could not save that Memory.'); }
+    };
     if (isVideo) {
         const previewPlayer = $('.composevideo');
         previewPlayer.play().then(() => {
@@ -740,12 +747,14 @@ const viewMe = () => {
       <input class="field" id="muser" value="${esc(p.username)}" autocomplete="off">
       <div class="err" id="merr"></div>
       <button class="btn" id="msave">Save</button>
+      <button class="pill" id="mmemories">Memories</button>
       <div class="settingrow"><div><b>Notifications</b><div class="muted tiny" id="pushstatus"></div></div><label class="switch"><input id="pushtoggle" type="checkbox"><span></span></label></div>
       ${isAdmin ? `<section class="adminpanel"><b>Admin · remove account</b><p class="muted tiny">Search a Mayfly user, then remove their account and server-side data.</p><input class="field" id="adminusersearch" placeholder="Find a user" autocomplete="off"><div id="adminuserresults" class="adminresults"></div></section>` : ''}
       <button class="btn ghost" id="mout">Log out</button>
       <p class="muted tiny">mayfly 🐛 — snaps vanish after they're opened. Full photos are never stored on our server: they stream peer-to-peer when your friend is online, or are end-to-end encrypted when they're not.</p>
     </main>`;
     let newAvatar = null;
+    $('#mmemories').onclick = () => { location.hash = '#/memories'; };
     $('#mpick').onclick = () => $('#mfile').click();
     $('#mfile').onchange = async () => {
         const f = $('#mfile').files[0]; if (!f) return;
@@ -840,6 +849,7 @@ const route = () => {
     detachAll();               // leaving a conversation → background msgs go to notifications
     closeCurrentGroup();        // leaving a group view → tear its channel/call down
     closeClips();
+    closeMemories();
     mountChrome();
     if (seg === 'chats') return viewChats();
     if (seg === 'c' && arg) return viewChats(arg);
@@ -850,6 +860,7 @@ const route = () => {
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);
     if (seg === 'group' && arg) return viewChats(null, arg);
     if (seg === 'me') return viewMe();
+    if (seg === 'memories') return viewMemories();
     return viewChats();
 };
 const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };

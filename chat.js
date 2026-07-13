@@ -21,6 +21,7 @@ let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
 let threadBox = null, convBox = null;
+let setReplyDraft = () => {};
 // A realtime INSERT and a catch-up query can legitimately see the same row. Keep
 // one ingestion job per row so that overlap cannot add the same message twice.
 const messageJobs = new Map();
@@ -75,7 +76,9 @@ const histUpdate = (uid, change) => {
     );
     return task;
 };
+const entryId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 const histPush = (uid, entry) => histUpdate(uid, (history) => {
+    entry.localId ||= entryId();
     history.push(entry); if (history.length > 300) history.splice(0, history.length - 300);
 });
 const lastLine = (h) => {
@@ -116,12 +119,15 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
 const clipFromPayload = (text, me = false, at = Date.now()) => {
     try { const p = JSON.parse(text); return p?.t === 'clip-share' && p.provider === 'youtube' && typeof p.name === 'string' && /^[\w-]{11}$/.test(p.videoId || '') ? { me, kind: 'clip', name: p.name, videoId: p.videoId, caption: typeof p.caption === 'string' ? p.caption.slice(0, 240) : '', at } : null; } catch (e) { return null; }
 };
+const replyFromPayload = (text, me = false, at = Date.now()) => {
+    try { const p = JSON.parse(text); return p?.t === 'chat-reply' && typeof p.text === 'string' && typeof p.reply === 'string' ? { me, kind: 'text', text: p.text.slice(0, MSG_MAX), replyTo: p.reply.slice(0, 240), at } : null; } catch (e) { return null; }
+};
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return false; }
     const at = new Date(row.created_at).getTime();
-    const entry = await storyReplyFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+    const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
@@ -304,6 +310,7 @@ export const openConversation = async (box, uid) => {
         <div class="tbody" id="tbody"><div class="spin">…</div></div>
         <div class="ctyping" id="ctyping"></div>
         <div class="voicepreview" hidden></div>
+        <div class="replydraft" id="replydraft" hidden><span></span><button type="button" aria-label="Cancel reply">×</button></div>
         <form class="tin">
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
           <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
@@ -326,7 +333,20 @@ export const openConversation = async (box, uid) => {
     fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };
     wireMic(box, uid);
     const form = $('.tin', box), input = $('.tinput', box);
-    form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; sendText(uid, username, t); };
+    let replyDraft = null;
+    const replyBar = $('#replydraft');
+    setReplyDraft = (entry) => {
+        replyDraft = { text: String(entry.text || entry.name || 'Message').slice(0, 240) };
+        $('span', replyBar).textContent = `Replying to: ${replyDraft.text}`; replyBar.hidden = false; input.focus();
+    };
+    $('button', replyBar).onclick = () => { replyDraft = null; replyBar.hidden = true; };
+    form.onsubmit = (e) => {
+        e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = '';
+        const msgId = entryId(), replyTo = replyDraft?.text || '';
+        const payload = replyTo ? JSON.stringify({ t: 'chat-reply', text: t, reply: replyTo }) : t;
+        replyDraft = null; replyBar.hidden = true;
+        sendText(uid, username, payload, { me: true, kind: 'text', text: t, replyTo, at: Date.now(), msgId, status: 'sent', localId: entryId() });
+    };
     input.oninput = () => { const c = conns.get(uid); if (c?.open) { try { c.send({ t: 'typing' }); } catch (e) {} clearTimeout(input._tt); input._tt = setTimeout(() => { try { c.send({ t: 'stop' }); } catch (e) {} }, 1200); } };
     await renderThreadBody(uid);
     ensureConn(uid, username);                     // best-effort live link for typing / media
@@ -348,7 +368,7 @@ const renderThreadBody = async (uid) => {
         if (e.kind === 'text' && e.me && e.msgId && deliveredMsgIds.has(e.msgId) && e.status !== 'delivered') { e.status = 'delivered'; return true; }
         return false;
     };
-    h.forEach(e => { if (reconcile(e)) dirty = true; });
+    h.forEach(e => { if (!e.localId) { e.localId = entryId(); dirty = true; } if (reconcile(e)) dirty = true; });
     if (dirty) histUpdate(uid, (history) => { history.forEach(reconcile); }).catch(() => {});
     const snaps = (inboxByUser[uid] || []).filter(s => isAfterClear(uid, new Date(s.created_at).getTime())).map(s => ({ snap: s, at: new Date(s.created_at).getTime() }));
     const items = [...h.map(e => ({ entry: e, at: e.at })), ...snaps].sort((a, b) => a.at - b.at);
@@ -360,7 +380,7 @@ const renderThreadBody = async (uid) => {
             const e = it.entry;
             if (e.kind === 'text') {
                 const sharedClip = clipFromPayload(e.text, e.me, e.at);
-                body.appendChild(sharedClip ? clipBubble(sharedClip) : el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
+                body.appendChild(sharedClip ? clipBubble(sharedClip) : textBubble(uid, e));
             }
             else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
             else if (e.kind === 'clip') body.appendChild(clipBubble(e));
@@ -382,6 +402,25 @@ const snapCard = (s) => {
     card.onclick = () => openSnap(s, card);
     return card;
 };
+const updateLocalEntry = async (uid, localId, update) => {
+    await histUpdate(uid, (history) => { const entry = history.find(x => x.localId === localId); if (entry) update(entry, history); });
+    if (openUid === uid) renderThreadBody(uid);
+};
+const textBubble = (uid, e) => {
+    const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
+    const reaction = e.reaction ? `<span class="localreaction">${esc(e.reaction)}</span>` : '';
+    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="b ${e.me ? 'me' : 'them'} ${e.saved ? 'saved' : ''}">${reply}${esc(e.text)}${reaction}</div><button class="messagemore" aria-label="Message options" title="Message options">⋯</button><div class="messagemenu" hidden><button data-action="reply">Reply</button><button data-action="react">👍</button><button data-action="love">♥</button><button data-action="save">${e.saved ? 'Unsave' : 'Save'}</button><button data-action="delete">Delete</button></div></div>`);
+    const menu = card.querySelector('.messagemenu');
+    card.querySelector('.messagemore').onclick = () => { menu.hidden = !menu.hidden; };
+    menu.onclick = async (event) => {
+        const action = event.target.dataset.action; if (!action) return;
+        if (action === 'reply') { setReplyDraft(e); return; }
+        if (action === 'react' || action === 'love') await updateLocalEntry(uid, e.localId, entry => { entry.reaction = action === 'react' ? '👍' : '♥'; });
+        if (action === 'save') await updateLocalEntry(uid, e.localId, entry => { entry.saved = !entry.saved; });
+        if (action === 'delete') await updateLocalEntry(uid, e.localId, (entry, history) => { history.splice(history.indexOf(entry), 1); });
+    };
+    return card;
+};
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
 const storyReplyBubble = (e) => {
     const w = Math.max(1, Math.min(4096, Number(e.storyW) || 4)), h = Math.max(1, Math.min(4096, Number(e.storyH) || 3));
@@ -389,15 +428,7 @@ const storyReplyBubble = (e) => {
     return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
 const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div>${e.caption ? `<div class="clipcaption">${esc(e.caption)}</div>` : ''}</div>`); };
-const appendEntry = (e) => {
-    if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
-    else if (e.kind === 'clip') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(clipBubble(e)); body.scrollTop = body.scrollHeight; }
-    else {
-        const sharedClip = e.kind === 'text' ? clipFromPayload(e.text, e.me, e.at) : null;
-        if (sharedClip) { const body = $('#tbody'); if (!body) return; body.appendChild(clipBubble(sharedClip)); body.scrollTop = body.scrollHeight; }
-        else appendBubble(e.text, e.me ? 'me' : 'them');
-    }
-};
+const appendEntry = () => { if (openUid) renderThreadBody(openUid); };
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 
 // ---- send an async encrypted text ----
@@ -412,8 +443,8 @@ export const sendText = async (uid, username, text, localEntry = null) => {
             return false;
         }
     }
-    const msgId = crypto.randomUUID();   // so the row's realtime DELETE = "delivered" receipt
-    const entry = localEntry || { me: true, kind: 'text', text, at: Date.now(), msgId, status: 'sent' };
+    const msgId = localEntry?.msgId || entryId();   // so the row's realtime DELETE = "delivered" receipt
+    const entry = localEntry || { me: true, kind: 'text', text, at: Date.now(), msgId, status: 'sent', localId: entryId() };
     await histPush(uid, entry);
     if (openUid === uid) appendEntry(entry);
     if (convBox) renderConvs(convBox, uid);

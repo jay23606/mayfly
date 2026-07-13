@@ -23,7 +23,7 @@ const shareClip = async () => {
     const clip = feed[index]; if (!clip) return;
     document.querySelector('.clipshare')?.remove();
     const sheet = el(`<div class="clipshare"><div class="clipsharecard"><div class="clipsharehead"><div><b>Share Clip</b><span>${esc(clip.name)}</span></div><button class="clipclose" aria-label="Close share menu">×</button></div><input class="recipsearch" id="clipfriendsearch" type="search" placeholder="Search friends" autocomplete="off"><div class="recips" id="clipfriends"><div class="spin">Loading friends...</div></div><button class="btn" id="clipsharego" disabled>Share</button></div></div>`);
-    document.body.appendChild(sheet);
+    (document.fullscreenElement || document.body).appendChild(sheet);
     const close = () => sheet.remove();
     sheet.querySelector('.clipclose').onclick = close;
     sheet.onclick = (event) => { if (event.target === sheet) close(); };
@@ -46,9 +46,8 @@ const shareClip = async () => {
     search.oninput = refresh; refresh();
     send.onclick = async () => {
         send.disabled = true; send.textContent = 'Sharing...';
-        const clipText = `Watch this clip: ${clip.name}\n${clip.url}`;
         let sent = 0;
-        for (const friend of friends.filter((item) => chosen.has(item.id))) if (await sendClipText?.(friend.id, friend.username || 'Friend', clipText)) sent++;
+        for (const friend of friends.filter((item) => chosen.has(item.id))) if (await sendClipText?.(friend.id, friend.username || 'Friend', clip)) sent++;
         close(); toast(sent ? `Shared with ${sent} friend${sent === 1 ? '' : 's'}.` : 'Could not share that clip.');
     };
 };
@@ -60,7 +59,7 @@ const renderClip = () => {
     stage.innerHTML = '';
     const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
     const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
-    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">${soundOn ? '↙︎ 🔇' : '↗︎ 🔊'}</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">↗</button></div>`);
+    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">⛶</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">⤴</button></div>`);
     controls.querySelector('.clipaudio').onclick = async () => {
         soundOn = !soundOn;
         if (soundOn) await enterClipFullscreen(clip);

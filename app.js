@@ -6,7 +6,7 @@ import { initPush, registerSW, enablePush, disablePush, pushPreference } from '.
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendText, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 import { viewClips, closeClips } from './clips.js';
 
@@ -844,7 +844,7 @@ const route = () => {
     if (seg === 'chats') return viewChats();
     if (seg === 'c' && arg) return viewChats(arg);
     if (seg === 'friends') return viewFriends();
-    if (seg === 'clips') return viewClips(sendText);
+    if (seg === 'clips') return viewClips(sendClipShare);
     if (seg === 'camera') return viewCamera();
     if (seg === 'snap' && arg) return viewCamera(arg);
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);

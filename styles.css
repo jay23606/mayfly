@@ -51,6 +51,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .clipmeta{position:absolute;z-index:2;left:0;right:0;bottom:0;display:grid;gap:2px;padding:52px 16px 16px;background:linear-gradient(transparent,#000d);pointer-events:none}
 .clipmeta b{font-size:16px}.clipmeta span,.clipmeta small{color:#ddd;font-size:13px}.clipmeta small{color:#aaa}
 .clipnote{text-align:center;padding:8px 4px}
+.clipbubble{max-width:min(330px,82vw);padding:8px}.clipembed{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#000;margin:4px 0 7px}
 .clipcontrols{position:absolute;z-index:3;right:12px;bottom:88px;display:grid;gap:8px}
 .clipcontrol{border:1px solid #ffffff44;border-radius:999px;background:#000a;color:#fff;padding:8px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
 .clipshare{position:fixed;z-index:100;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:16px;background:#0009}

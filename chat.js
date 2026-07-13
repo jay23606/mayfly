@@ -113,11 +113,14 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
         return { me, kind: 'story-reply', text: p.text, storyId: p.storyId, preview, storyW, storyH, at };
     } catch (e) { return null; }
 };
+const clipFromPayload = (text, me = false, at = Date.now()) => {
+    try { const p = JSON.parse(text); return p?.t === 'clip-share' && typeof p.name === 'string' && /^\/videos\/embed\/[\w-]+$/.test(p.embedPath || '') ? { me, kind: 'clip', name: p.name, embedPath: p.embedPath, at } : null; } catch (e) { return null; }
+};
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return false; }
     const at = new Date(row.created_at).getTime();
-    const entry = await storyReplyFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+    const entry = await storyReplyFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
@@ -356,6 +359,7 @@ const renderThreadBody = async (uid) => {
             const e = it.entry;
             if (e.kind === 'text') body.appendChild(el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
             else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
+            else if (e.kind === 'clip') body.appendChild(clipBubble(e));
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
             else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
         }
@@ -380,8 +384,10 @@ const storyReplyBubble = (e) => {
     const preview = e.preview ? `<div class="storyreplypreview" style="aspect-ratio:${w} / ${h}"><img src="${safeMediaUrl(e.preview)}" alt="Story preview"></div>` : '';
     return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
+const clipBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">Clip</div><iframe class="clipembed" title="${esc(e.name)}" src="https://peertube.cpy.re${e.embedPath}?autoplay=0&muted=0&loop=1&title=0&warningTitle=0" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(e.name)}</div></div>`);
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
+    else if (e.kind === 'clip') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(clipBubble(e)); body.scrollTop = body.scrollHeight; }
     else appendBubble(e.text, e.me ? 'me' : 'them');
 };
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
@@ -416,6 +422,7 @@ export const sendStoryReply = async (uid, username, text, story) => {
     const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text, w: storyW, h: storyH });
     return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, storyW, storyH, at: Date.now() });
 };
+export const sendClipShare = (uid, username, clip) => sendText(uid, username, JSON.stringify({ t: 'clip-share', name: clip.name, embedPath: clip.embedPath }), { me: true, kind: 'clip', name: clip.name, embedPath: clip.embedPath, at: Date.now() });
 
 // ===================== snap opening =====================
 const openSnap = async (s, card) => {

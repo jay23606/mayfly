@@ -357,7 +357,10 @@ const renderThreadBody = async (uid) => {
         if (it.snap) body.appendChild(snapCard(it.snap));
         else {
             const e = it.entry;
-            if (e.kind === 'text') body.appendChild(el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
+            if (e.kind === 'text') {
+                const sharedClip = clipFromPayload(e.text, e.me, e.at);
+                body.appendChild(sharedClip ? clipBubble(sharedClip) : el(`<div class="b ${e.me ? 'me' : 'them'}">${esc(e.text)}</div>`));
+            }
             else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
             else if (e.kind === 'clip') body.appendChild(clipBubble(e));
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
@@ -388,7 +391,11 @@ const clipBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble">
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
     else if (e.kind === 'clip') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(clipBubble(e)); body.scrollTop = body.scrollHeight; }
-    else appendBubble(e.text, e.me ? 'me' : 'them');
+    else {
+        const sharedClip = e.kind === 'text' ? clipFromPayload(e.text, e.me, e.at) : null;
+        if (sharedClip) { const body = $('#tbody'); if (!body) return; body.appendChild(clipBubble(sharedClip)); body.scrollTop = body.scrollHeight; }
+        else appendBubble(e.text, e.me ? 'me' : 'them');
+    }
 };
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 

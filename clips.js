@@ -9,6 +9,11 @@ let feed = [], index = 0, query = 'funny', exhausted = false, loading = false, s
 
 const playerUrl = (clip) => `${INSTANCE}${clip.embedPath}?autoplay=1&muted=${soundOn ? 0 : 1}&loop=1&title=0&warningTitle=0&controlBar=0&p2p=0`;
 const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.requester;
+const enterClipFullscreen = async (clip) => {
+    const stage = document.querySelector('#clipstage');
+    try { if (stage && !document.fullscreenElement) await stage.requestFullscreen(); } catch (e) {}
+    try { await screen.orientation?.lock?.((clip.aspectRatio || 1) < 1 ? 'portrait' : 'landscape'); } catch (e) {}
+};
 
 const shareClip = async () => {
     const clip = feed[index]; if (!clip) return;
@@ -52,7 +57,11 @@ const renderClip = () => {
     const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
     const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
     const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio">${soundOn ? 'Sound off' : 'Sound on'}</button><button class="clipcontrol clipsharebtn">Share</button></div>`);
-    controls.querySelector('.clipaudio').onclick = () => { soundOn = !soundOn; renderClip(); };
+    controls.querySelector('.clipaudio').onclick = async () => {
+        soundOn = !soundOn;
+        if (soundOn) await enterClipFullscreen(clip);
+        renderClip();
+    };
     controls.querySelector('.clipsharebtn').onclick = shareClip;
     stage.append(frame, meta, controls);
 };
@@ -90,7 +99,7 @@ const move = async (delta) => {
     if (next >= feed.length && exhausted && feed.length) { index = 0; renderClip(); }
     else if (next < feed.length) { index = next; renderClip(); }
 };
-export const closeClips = () => { cleanup(); cleanup = () => {}; document.querySelector('.clipshare')?.remove(); };
+export const closeClips = () => { cleanup(); cleanup = () => {}; document.querySelector('.clipshare')?.remove(); try { screen.orientation?.unlock?.(); } catch (e) {} };
 
 export const viewClips = async (shareText) => {
     closeClips();

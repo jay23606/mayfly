@@ -653,6 +653,7 @@ const HIDDEN_KEY = 'mf_hidden';
 const getHidden = () => { try { return new Set(JSON.parse(localStorage[HIDDEN_KEY] || '[]')); } catch { return new Set(); } };
 const hideUser = (uid) => { const h = getHidden(); h.add(uid); localStorage[HIDDEN_KEY] = JSON.stringify([...h]); };
 const viewFriends = () => {
+    const forcedPrivate = Boolean(state.profile?.profile_private && state.profile?.privacy_locked);
     app.innerHTML = `<main>
       <h3 class="vtitle">Friends</h3>
       <input class="field searchbar" id="usearch" placeholder="Search people by username…" autocomplete="off">
@@ -662,10 +663,15 @@ const viewFriends = () => {
       <div id="discover"><div class="spin">Loading…</div></div>
     </main>`;
     const s = $('#usearch'); let t;
-    s.oninput = () => { clearTimeout(t); t = setTimeout(() => renderDiscover(s.value.trim()), 220); };
+    if (forcedPrivate) {
+        s.remove();
+        const discover = $('#discover');
+        discover.previousElementSibling?.remove();
+        discover.innerHTML = '<div class="empty">Your account is private by administrator setting. You cannot add people while this is enabled.</div>';
+    } else s.oninput = () => { clearTimeout(t); t = setTimeout(() => renderDiscover(s.value.trim()), 220); };
     renderRequests();
     renderFriends();
-    renderDiscover('');
+    if (!forcedPrivate) renderDiscover('');
 };
 // Discover: up to 50 people you can add — Add sends a request, ✕ hides them for good.
 // Already-friends / pending-either-way / hidden people are filtered out.
@@ -750,6 +756,7 @@ const viewMe = () => {
       <label class="lbl">Public profile</label>
       <textarea class="field profilebio" id="mbio" maxlength="200" placeholder="Tell people a little about yourself…">${esc(p.bio || '')}</textarea>
       <div class="muted tiny" id="biocount">${String(p.bio || '').length}/200</div>
+      <div class="settingrow"><div><b>Private profile</b><div class="muted tiny">${p.privacy_locked ? 'Set by an administrator. Only an administrator can remove it.' : 'Hide your profile from Add People.'}</div></div><label class="switch"><input id="privacytoggle" type="checkbox" ${p.profile_private ? 'checked' : ''} ${p.privacy_locked ? 'disabled' : ''}><span></span></label></div>
       <div class="err" id="merr"></div>
       <button class="btn" id="msave">Save</button>
       <button class="pill" id="mmemories">Memories</button>
@@ -762,6 +769,15 @@ const viewMe = () => {
     $('#mmemories').onclick = () => { location.hash = '#/memories'; };
     const bio = $('#mbio'), bioCount = $('#biocount');
     bio.oninput = () => { bioCount.textContent = `${bio.value.length}/200`; };
+    const privacyToggle = $('#privacytoggle');
+    privacyToggle.onchange = async () => {
+        const profile_private = privacyToggle.checked;
+        privacyToggle.disabled = true;
+        const { error } = await db.updateProfile({ profile_private });
+        if (error) { privacyToggle.checked = !profile_private; toast('Could not update profile privacy.'); }
+        else { state.profile.profile_private = profile_private; toast(profile_private ? 'Profile is private' : 'Profile is public'); }
+        privacyToggle.disabled = Boolean(state.profile.privacy_locked);
+    };
     $('#mpick').onclick = () => $('#mfile').click();
     $('#mfile').onchange = async () => {
         const f = $('#mfile').files[0]; if (!f) return;
@@ -803,14 +819,25 @@ const viewMe = () => {
             const q = search.value.trim();
             if (q.length < 2) { results.innerHTML = `<div class="muted tiny">Type at least two characters.</div>`; return; }
             results.innerHTML = `<div class="spin">Searching…</div>`;
-            const { data, error } = await db.searchProfiles(q);
+            const { data, error } = await db.adminSearchProfiles(q);
             if (!$('#adminuserresults')) return;
             if (error) { results.innerHTML = `<div class="err">Could not search users.</div>`; return; }
             const users = (data || []).filter(u => u.id !== MAYFLY_ADMIN_ID);
             if (!users.length) { results.innerHTML = `<div class="muted tiny">No matching users.</div>`; return; }
             results.innerHTML = '';
             users.forEach((u) => {
-                const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b></div><div class="acts"><button class="pill danger removeuser">Remove</button></div></div>`);
+                const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b><div class="sub privacylabel">${u.privacy_locked ? 'Forced private' : (u.profile_private ? 'Private' : 'Public')}</div></div><div class="acts"><button class="pill forceprivacy">${u.privacy_locked ? 'Unlock privacy' : 'Force private'}</button><button class="pill danger removeuser">Remove</button></div></div>`);
+                $('.forceprivacy', row).onclick = async () => {
+                    const forcePrivate = !u.privacy_locked;
+                    if (!confirm(forcePrivate ? `Force ${u.username}'s profile private and prevent them from adding people?` : `Remove the forced privacy lock for ${u.username}?`)) return;
+                    const button = $('.forceprivacy', row); button.disabled = true;
+                    const { error: privacyError } = await db.adminSetProfilePrivacy(u.id, forcePrivate);
+                    if (privacyError) { button.disabled = false; return toast('Could not update profile privacy.'); }
+                    u.profile_private = forcePrivate; u.privacy_locked = forcePrivate;
+                    button.textContent = forcePrivate ? 'Unlock privacy' : 'Force private'; button.disabled = false;
+                    $('.privacylabel', row).textContent = forcePrivate ? 'Forced private' : 'Public';
+                    toast(forcePrivate ? `${u.username} is now forced private.` : `Privacy lock removed for ${u.username}.`);
+                };
                 $('.removeuser', row).onclick = async () => {
                     if (!confirm(`Remove ${u.username} from Mayfly and delete their server-side data? This cannot be undone.`)) return;
                     const button = $('.removeuser', row); button.disabled = true; button.textContent = 'Removing…';

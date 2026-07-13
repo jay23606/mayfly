@@ -1,7 +1,7 @@
 import { sb, state } from './core.js';
 
 // ===================== data access (all mf_-prefixed) =====================
-const PROF = 'id, username, avatar, bio, pubkey, created_at';
+const PROF = 'id, username, avatar, bio, pubkey, created_at, profile_private, privacy_locked';
 const db = {
     // ---- profiles ----
     myProfile: () => sb.from('mf_profiles').select('*').eq('id', state.me.id).maybeSingle(),
@@ -10,9 +10,11 @@ const db = {
     publicFriendCount: (id) => sb.rpc('mf_public_friend_count', { profile_id: id }),
     updateProfile: (patch) => sb.from('mf_profiles').update(patch).eq('id', state.me.id),
     adminDeleteUser: (targetId) => sb.functions.invoke('admin-delete-user', { body: { targetId } }),
+    adminSetProfilePrivacy: (targetId, forcePrivate) => sb.functions.invoke('admin-profile-privacy', { body: { targetId, forcePrivate } }),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
-    searchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
-    allProfiles: () => sb.from('mf_profiles').select(PROF).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),
+    searchProfiles: (q) => sb.from('mf_profiles').select(PROF).eq('profile_private', false).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
+    allProfiles: () => sb.from('mf_profiles').select(PROF).eq('profile_private', false).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),
+    adminSearchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).limit(50),
 
     // ---- friends (symmetric: one row per pair, either direction) ----
     friends: () => sb.from('mf_friends')

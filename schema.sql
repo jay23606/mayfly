@@ -21,10 +21,14 @@ create table if not exists public.mf_profiles (
   username   text unique not null,
   avatar     text not null default '',
   bio        text not null default '',
+  profile_private boolean not null default false,
+  privacy_locked boolean not null default false,
   pubkey     text not null default '',
   created_at timestamptz not null default now()
 );
 alter table public.mf_profiles add column if not exists bio text not null default '';
+alter table public.mf_profiles add column if not exists profile_private boolean not null default false;
+alter table public.mf_profiles add column if not exists privacy_locked boolean not null default false;
 alter table public.mf_profiles drop constraint if exists mf_profiles_bio_length;
 alter table public.mf_profiles add constraint mf_profiles_bio_length check (char_length(bio) <= 200);
 alter table public.mf_profiles enable row level security;
@@ -58,6 +62,41 @@ create policy "mf_friends_update" on public.mf_friends for update using (auth.ui
 drop policy if exists "mf_friends_delete" on public.mf_friends;
 create policy "mf_friends_delete" on public.mf_friends for delete
   using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+-- A user may choose whether their profile appears in Add People. Only a trusted
+-- server-side administrator may lock or unlock that setting.
+create or replace function public.mf_enforce_profile_privacy()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() = old.id then
+    if new.privacy_locked is distinct from old.privacy_locked then
+      raise exception 'only an administrator can change the privacy lock';
+    end if;
+    if old.privacy_locked and new.profile_private is distinct from old.profile_private then
+      raise exception 'this profile privacy setting is locked by an administrator';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists mf_enforce_profile_privacy on public.mf_profiles;
+create trigger mf_enforce_profile_privacy before update on public.mf_profiles
+for each row execute function public.mf_enforce_profile_privacy();
+
+create or replace function public.mf_enforce_private_friend_request()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare requester_forced_private boolean; recipient_private boolean;
+begin
+  select profile_private and privacy_locked into requester_forced_private from public.mf_profiles where id = new.requester_id;
+  if coalesce(requester_forced_private, false) then raise exception 'private accounts locked by an administrator cannot add people'; end if;
+  select profile_private into recipient_private from public.mf_profiles where id = new.addressee_id;
+  if coalesce(recipient_private, false) then raise exception 'this profile is private'; end if;
+  return new;
+end;
+$$;
+drop trigger if exists mf_enforce_private_friend_request on public.mf_friends;
+create trigger mf_enforce_private_friend_request before insert on public.mf_friends
+for each row execute function public.mf_enforce_private_friend_request();
 
 -- ---------------------------------------------------------------------------
 -- mf_snaps: directed, ephemeral. preview (LQIP) only; full image is P2P or encrypted.

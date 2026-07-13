@@ -814,7 +814,7 @@ const viewMe = () => {
 const tabbar = () => `<nav id="tabbar" aria-label="Primary">
     <button class="tab" data-go="#/chats" aria-label="Chats">💬<span class="badge-count" id="chatdot"></span></button>
     <button class="tab" data-go="#/friends" aria-label="Friends">👥</button>
-    <button class="tab cam" data-go="#/camera" aria-label="Camera">◉</button>
+    <button class="tab cam" data-go="#/camera" aria-label="Camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5 10 3.75h4l1.5 1.75H19A2.5 2.5 0 0 1 21.5 8v9A2.5 2.5 0 0 1 19 19.5H5A2.5 2.5 0 0 1 2.5 17V8A2.5 2.5 0 0 1 5 5.5h3.5Z"/><circle cx="12" cy="12.5" r="3.25"/></svg></button>
     <button class="tab" data-go="#/clips" aria-label="Clips">▶</button>
     <button class="tab" data-go="#/me" aria-label="You">${isMediaUrl(state.profile.avatar) ? `<span class="navavatar"><img src="${state.profile.avatar}" alt=""></span>` : `<span class="navavatar">${initial(state.profile.username)}</span>`}</button>
   </nav>`;

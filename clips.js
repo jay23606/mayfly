@@ -110,15 +110,24 @@ export const viewClips = async (shareText) => {
     closeClips();
     sendClipText = shareText;
     query = localStorage.getItem(SEARCH_KEY) || 'funny';
-    app.innerHTML = `<main class="clipswrap"><form class="cliptop" id="clipsearch"><input class="recipsearch" id="clipquery" type="search" value="${esc(query)}" placeholder="Search clips" autocomplete="off" aria-label="Search clips"><button class="clipreload">Search</button></form><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Searches YouTube videos. Swipe to keep watching.</p></main>`;
+    app.innerHTML = `<main class="clipswrap"><form class="cliptop" id="clipsearch"><input class="recipsearch" id="clipquery" type="search" value="${esc(query)}" placeholder="Search clips" autocomplete="off" aria-label="Search clips"><button class="clipreload">Search</button></form><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Swipe or use your mouse wheel to keep watching.</p></main>`;
     const stage = document.querySelector('#clipstage');
-    let startY = null, longPress = null, pressed = false;
+    let startY = null, longPress = null, pressed = false, wheelDistance = 0, wheelLocked = false;
     const clearPress = () => { clearTimeout(longPress); longPress = null; };
     const onStart = (event) => { startY = event.touches?.[0]?.clientY ?? event.clientY; pressed = false; clearPress(); longPress = setTimeout(() => { pressed = true; shareClip(); }, 550); };
     const onEnd = (event) => { if (startY == null) return; const endY = event.changedTouches?.[0]?.clientY ?? event.clientY; const delta = startY - endY; startY = null; clearPress(); if (!pressed && Math.abs(delta) > 45) move(delta > 0 ? 1 : -1); };
+    const onWheel = (event) => {
+        event.preventDefault();
+        if (wheelLocked || !event.deltaY) return;
+        wheelDistance += event.deltaY;
+        if (Math.abs(wheelDistance) < 45) return;
+        const direction = wheelDistance > 0 ? 1 : -1;
+        wheelDistance = 0; wheelLocked = true;
+        move(direction).finally(() => { setTimeout(() => { wheelLocked = false; }, 180); });
+    };
     const onKey = (event) => { if (event.key === 'ArrowDown' || event.key === 'PageDown') { event.preventDefault(); move(1); } if (event.key === 'ArrowUp' || event.key === 'PageUp') { event.preventDefault(); move(-1); } };
-    stage.addEventListener('touchstart', onStart, { passive: true }); stage.addEventListener('touchend', onEnd, { passive: true }); stage.addEventListener('touchcancel', clearPress, { passive: true }); stage.addEventListener('pointerdown', onStart); stage.addEventListener('pointerup', onEnd); window.addEventListener('keydown', onKey);
-    cleanup = () => { clearPress(); stage.removeEventListener('touchstart', onStart); stage.removeEventListener('touchend', onEnd); stage.removeEventListener('touchcancel', clearPress); stage.removeEventListener('pointerdown', onStart); stage.removeEventListener('pointerup', onEnd); window.removeEventListener('keydown', onKey); };
+    stage.addEventListener('touchstart', onStart, { passive: true }); stage.addEventListener('touchend', onEnd, { passive: true }); stage.addEventListener('touchcancel', clearPress, { passive: true }); stage.addEventListener('pointerdown', onStart); stage.addEventListener('pointerup', onEnd); stage.addEventListener('wheel', onWheel, { passive: false }); window.addEventListener('keydown', onKey);
+    cleanup = () => { clearPress(); stage.removeEventListener('touchstart', onStart); stage.removeEventListener('touchend', onEnd); stage.removeEventListener('touchcancel', clearPress); stage.removeEventListener('pointerdown', onStart); stage.removeEventListener('pointerup', onEnd); stage.removeEventListener('wheel', onWheel); window.removeEventListener('keydown', onKey); };
     const search = async (event) => { event.preventDefault(); query = document.querySelector('#clipquery').value.trim() || 'funny'; try { localStorage.setItem(SEARCH_KEY, query); } catch (e) {} stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) throw new Error('No clips'); renderClip(); } catch { stage.innerHTML = '<div class="empty">Clips are unavailable right now. Try another search.</div>'; } };
     document.querySelector('#clipsearch').onsubmit = search;
     await search(new Event('submit'));

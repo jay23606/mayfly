@@ -5,7 +5,7 @@ import { db } from './db.js';
 // endpoint with a moderated provider before making Clips a permanent product surface.
 const PAGE_SIZE = 12;
 let feed = [], index = 0, query = 'funny', nextPageToken = null, exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
-const SEARCH_KEY = 'mayfly:clips-search', CACHE_PREFIX = 'mayfly:clips-cache:', CACHE_TTL = 6 * 60 * 60 * 1000;
+const SEARCH_KEY = 'mayfly:clips-search', CACHE_PREFIX = 'mayfly:clips-cache:';
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 
 const playerUrl = (clip) => `https://www.youtube-nocookie.com/embed/${clip.videoId}?autoplay=1&mute=${soundOn ? 0 : 1}&loop=1&playlist=${clip.videoId}&rel=0&playsinline=1`;
@@ -78,7 +78,7 @@ const loadMore = async (reset = false) => {
         if (reset) {
             try {
                 const cached = JSON.parse(localStorage.getItem(CACHE_PREFIX + query) || 'null');
-                if (cached?.at > Date.now() - CACHE_TTL && Array.isArray(cached.items)) {
+                if (Array.isArray(cached?.items)) {
                     feed = cached.items; nextPageToken = cached.nextPageToken || null; exhausted = !nextPageToken; index = 0;
                     return;
                 }

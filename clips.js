@@ -1,11 +1,48 @@
-import { app, el, esc } from './core.js';
+import { app, el, esc, state, avatarHTML, toast } from './core.js';
+import { db } from './db.js';
 
 // Public PeerTube test instance used as a no-cost proof of concept. Replace this
 // endpoint with a moderated provider before making Clips a permanent product surface.
 const INSTANCE = 'https://peertube.cpy.re';
-const FEED_URL = `${INSTANCE}/api/v1/videos?count=12&sort=-publishedAt&nsfw=false`;
-let feed = [], index = 0, cleanup = () => {};
-const playerUrl = (clip) => `${INSTANCE}${clip.embedPath}?autoplay=1&muted=1&loop=1&title=0&warningTitle=0&controlBar=0&p2p=0`;
+const PAGE_SIZE = 12;
+let feed = [], index = 0, query = 'funny', exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
+
+const playerUrl = (clip) => `${INSTANCE}${clip.embedPath}?autoplay=1&muted=${soundOn ? 0 : 1}&loop=1&title=0&warningTitle=0&controlBar=0&p2p=0`;
+const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.requester;
+
+const shareClip = async () => {
+    const clip = feed[index]; if (!clip) return;
+    document.querySelector('.clipshare')?.remove();
+    const sheet = el(`<div class="clipshare"><div class="clipsharecard"><div class="clipsharehead"><div><b>Share Clip</b><span>${esc(clip.name)}</span></div><button class="clipclose" aria-label="Close share menu">×</button></div><input class="recipsearch" id="clipfriendsearch" type="search" placeholder="Search friends" autocomplete="off"><div class="recips" id="clipfriends"><div class="spin">Loading friends...</div></div><button class="btn" id="clipsharego" disabled>Share</button></div></div>`);
+    document.body.appendChild(sheet);
+    const close = () => sheet.remove();
+    sheet.querySelector('.clipclose').onclick = close;
+    sheet.onclick = (event) => { if (event.target === sheet) close(); };
+    const { data } = await db.friends();
+    const friends = (data || []).map(otherOf).filter(Boolean);
+    const chosen = new Set(), search = sheet.querySelector('#clipfriendsearch'), box = sheet.querySelector('#clipfriends'), send = sheet.querySelector('#clipsharego');
+    const refresh = () => {
+        const q = search.value.trim().toLowerCase();
+        const matches = q ? friends.filter((friend) => friend.username?.toLowerCase().includes(q)) : friends;
+        box.innerHTML = '';
+        if (!matches.length) box.appendChild(el('<div class="empty" style="width:100%">No matching friends.</div>'));
+        matches.forEach((friend) => {
+            const chip = el(`<button class="recip ${chosen.has(friend.id) ? 'on' : ''}">${avatarHTML(friend.username, friend.avatar)}<span>${esc(friend.username)}</span></button>`);
+            chip.onclick = () => { chosen.has(friend.id) ? chosen.delete(friend.id) : chosen.add(friend.id); refresh(); };
+            box.appendChild(chip);
+        });
+        send.disabled = !chosen.size;
+        send.textContent = chosen.size ? `Share to ${chosen.size}` : 'Share';
+    };
+    search.oninput = refresh; refresh();
+    send.onclick = async () => {
+        send.disabled = true; send.textContent = 'Sharing...';
+        const clipText = `Watch this clip: ${clip.name}\n${clip.url}`;
+        let sent = 0;
+        for (const friend of friends.filter((item) => chosen.has(item.id))) if (await sendClipText?.(friend.id, friend.username || 'Friend', clipText)) sent++;
+        close(); toast(sent ? `Shared with ${sent} friend${sent === 1 ? '' : 's'}.` : 'Could not share that clip.');
+    };
+};
 
 const renderClip = () => {
     const stage = document.querySelector('#clipstage');
@@ -13,27 +50,61 @@ const renderClip = () => {
     const clip = feed[index];
     stage.innerHTML = '';
     const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
-    const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1} / ${feed.length}</small></div>`);
-    stage.append(frame, meta);
+    const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
+    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio">${soundOn ? 'Sound off' : 'Sound on'}</button><button class="clipcontrol clipsharebtn">Share</button></div>`);
+    controls.querySelector('.clipaudio').onclick = () => { soundOn = !soundOn; renderClip(); };
+    controls.querySelector('.clipsharebtn').onclick = shareClip;
+    stage.append(frame, meta, controls);
 };
-const move = (delta) => { const next = index + delta; if (next >= 0 && next < feed.length) { index = next; renderClip(); } };
-export const closeClips = () => { cleanup(); cleanup = () => {}; };
 
-export const viewClips = async () => {
+const loadMore = async (reset = false) => {
+    if (loading || (!reset && exhausted)) return;
+    loading = true;
+    try {
+        const start = reset ? 0 : feed.length;
+        const response = await fetch(`${INSTANCE}/api/v1/search/videos?search=${encodeURIComponent(query)}&count=${PAGE_SIZE}&start=${start}&sort=-publishedAt&nsfw=false`);
+        if (!response.ok) throw new Error(`Feed returned ${response.status}`);
+        const body = await response.json();
+        let additions = (body.data || []).filter((clip) => clip.embedPath && !(reset ? [] : feed).some((old) => old.uuid === clip.uuid));
+        // The free test instance has a very small search index. Keep the initial
+        // result relevant, then fill the rest from its public catalogue so Clips
+        // remains a usable, continuously swipeable demo.
+        if (additions.length < PAGE_SIZE) {
+            const fallback = await fetch(`${INSTANCE}/api/v1/videos?count=${PAGE_SIZE}&start=${start}&sort=-publishedAt&nsfw=false`);
+            if (fallback.ok) {
+                const extra = (await fallback.json()).data || [];
+                additions = [...additions, ...extra.filter((clip) => clip.embedPath && ![...(reset ? [] : feed), ...additions].some((old) => old.uuid === clip.uuid))];
+            }
+        }
+        feed = reset ? additions : [...feed, ...additions];
+        exhausted = additions.length < PAGE_SIZE;
+        if (reset) index = 0;
+    } finally { loading = false; }
+};
+const move = async (delta) => {
+    const next = index + delta;
+    if (next < 0) return;
+    if (next >= feed.length) await loadMore();
+    // Keep the swipe experience continuous when the public source has no more
+    // results for this search. A future Mayfly-owned feed can append new clips here.
+    if (next >= feed.length && exhausted && feed.length) { index = 0; renderClip(); }
+    else if (next < feed.length) { index = next; renderClip(); }
+};
+export const closeClips = () => { cleanup(); cleanup = () => {}; document.querySelector('.clipshare')?.remove(); };
+
+export const viewClips = async (shareText) => {
     closeClips();
-    app.innerHTML = `<main class="clipswrap"><div class="cliptop"><div><h3>Clips</h3><p>Swipe for the next public video</p></div><button class="clipreload" aria-label="Reload clips">Reload</button></div><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Powered by public PeerTube videos. Playback starts muted.</p></main>`;
+    sendClipText = shareText;
+    app.innerHTML = `<main class="clipswrap"><form class="cliptop" id="clipsearch"><input class="recipsearch" id="clipquery" type="search" value="funny" placeholder="Search clips" autocomplete="off" aria-label="Search clips"><button class="clipreload">Search</button></form><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Searches public PeerTube videos. Swipe to keep watching.</p></main>`;
     const stage = document.querySelector('#clipstage');
-    let startY = null;
-    const onStart = (event) => { startY = event.touches?.[0]?.clientY ?? event.clientY; };
-    const onEnd = (event) => { if (startY == null) return; const endY = event.changedTouches?.[0]?.clientY ?? event.clientY; const delta = startY - endY; startY = null; if (Math.abs(delta) > 45) move(delta > 0 ? 1 : -1); };
+    let startY = null, longPress = null, pressed = false;
+    const clearPress = () => { clearTimeout(longPress); longPress = null; };
+    const onStart = (event) => { startY = event.touches?.[0]?.clientY ?? event.clientY; pressed = false; clearPress(); longPress = setTimeout(() => { pressed = true; shareClip(); }, 550); };
+    const onEnd = (event) => { if (startY == null) return; const endY = event.changedTouches?.[0]?.clientY ?? event.clientY; const delta = startY - endY; startY = null; clearPress(); if (!pressed && Math.abs(delta) > 45) move(delta > 0 ? 1 : -1); };
     const onKey = (event) => { if (event.key === 'ArrowDown' || event.key === 'PageDown') { event.preventDefault(); move(1); } if (event.key === 'ArrowUp' || event.key === 'PageUp') { event.preventDefault(); move(-1); } };
-    stage.addEventListener('touchstart', onStart, { passive: true }); stage.addEventListener('touchend', onEnd, { passive: true }); stage.addEventListener('pointerdown', onStart); stage.addEventListener('pointerup', onEnd); window.addEventListener('keydown', onKey);
-    cleanup = () => { stage.removeEventListener('touchstart', onStart); stage.removeEventListener('touchend', onEnd); stage.removeEventListener('pointerdown', onStart); stage.removeEventListener('pointerup', onEnd); window.removeEventListener('keydown', onKey); };
-    const load = async () => {
-        stage.innerHTML = '<div class="spin">Loading clips...</div>';
-        try { const response = await fetch(FEED_URL); if (!response.ok) throw new Error(`Feed returned ${response.status}`); const body = await response.json(); feed = (body.data || []).filter((clip) => clip.embedPath); index = 0; if (!feed.length) throw new Error('No playable clips available'); renderClip(); }
-        catch { stage.innerHTML = '<div class="empty">Clips are unavailable right now. Try reloading.</div>'; }
-    };
-    document.querySelector('.clipreload').onclick = load;
-    await load();
+    stage.addEventListener('touchstart', onStart, { passive: true }); stage.addEventListener('touchend', onEnd, { passive: true }); stage.addEventListener('touchcancel', clearPress, { passive: true }); stage.addEventListener('pointerdown', onStart); stage.addEventListener('pointerup', onEnd); window.addEventListener('keydown', onKey);
+    cleanup = () => { clearPress(); stage.removeEventListener('touchstart', onStart); stage.removeEventListener('touchend', onEnd); stage.removeEventListener('touchcancel', clearPress); stage.removeEventListener('pointerdown', onStart); stage.removeEventListener('pointerup', onEnd); window.removeEventListener('keydown', onKey); };
+    const search = async (event) => { event.preventDefault(); query = document.querySelector('#clipquery').value.trim() || 'funny'; stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) throw new Error('No clips'); renderClip(); } catch { stage.innerHTML = '<div class="empty">Clips are unavailable right now. Try another search.</div>'; } };
+    document.querySelector('#clipsearch').onsubmit = search;
+    await search(new Event('submit'));
 };

@@ -387,7 +387,7 @@ const appendEntry = (e) => {
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 
 // ---- send an async encrypted text ----
-const sendText = async (uid, username, text, localEntry = null) => {
+export const sendText = async (uid, username, text, localEntry = null) => {
     text = text.slice(0, MSG_MAX);   // hard size cap (backstop to the input maxlength)
     // Cap how many undelivered messages can queue up for a friend who's offline.
     if (!isOnline(uid)) {

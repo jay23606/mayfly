@@ -901,4 +901,4 @@ $('#cflip').onclick = async () => {
 $('#capps').onclick = toggleCallApps;
 $('#lv').onclick = swapCallViews;
 $('#lv').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); swapCallViews(); } };
-setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');
+setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera'); if ($('#capps')) $('#capps').innerHTML = icon('gamepad'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');

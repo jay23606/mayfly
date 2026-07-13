@@ -1,13 +1,12 @@
-import { app, el, esc, state, avatarHTML, toast } from './core.js';
+import { app, el, esc, state, avatarHTML, toast, sb } from './core.js';
 import { db } from './db.js';
 
 // Public PeerTube test instance used as a no-cost proof of concept. Replace this
 // endpoint with a moderated provider before making Clips a permanent product surface.
-const INSTANCE = 'https://peertube.cpy.re';
 const PAGE_SIZE = 12;
-let feed = [], index = 0, query = 'funny', exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
+let feed = [], index = 0, query = 'funny', nextPageToken = null, exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
 
-const playerUrl = (clip) => `${INSTANCE}${clip.embedPath}?autoplay=1&muted=${soundOn ? 0 : 1}&loop=1&title=0&warningTitle=0&controlBar=0&p2p=0`;
+const playerUrl = (clip) => `https://www.youtube-nocookie.com/embed/${clip.videoId}?autoplay=1&mute=${soundOn ? 0 : 1}&loop=1&playlist=${clip.videoId}&rel=0&playsinline=1`;
 const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.requester;
 const enterClipFullscreen = async (clip) => {
     const stage = document.querySelector('#clipstage');
@@ -58,7 +57,7 @@ const renderClip = () => {
     const clip = feed[index];
     stage.innerHTML = '';
     const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
-    const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
+    const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.channel || 'YouTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
     const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">⛶</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">⤴</button></div>`);
     controls.querySelector('.clipaudio').onclick = async () => {
         soundOn = !soundOn;
@@ -75,22 +74,12 @@ const loadMore = async (reset = false) => {
     loading = true;
     try {
         const start = reset ? 0 : feed.length;
-        const response = await fetch(`${INSTANCE}/api/v1/search/videos?search=${encodeURIComponent(query)}&count=${PAGE_SIZE}&start=${start}&sort=-publishedAt&nsfw=false`);
-        if (!response.ok) throw new Error(`Feed returned ${response.status}`);
-        const body = await response.json();
-        let additions = (body.data || []).filter((clip) => clip.embedPath && !(reset ? [] : feed).some((old) => old.uuid === clip.uuid));
-        // The free test instance has a very small search index. Keep the initial
-        // result relevant, then fill the rest from its public catalogue so Clips
-        // remains a usable, continuously swipeable demo.
-        if (additions.length < PAGE_SIZE) {
-            const fallback = await fetch(`${INSTANCE}/api/v1/videos?count=${PAGE_SIZE}&start=${start}&sort=-publishedAt&nsfw=false`);
-            if (fallback.ok) {
-                const extra = (await fallback.json()).data || [];
-                additions = [...additions, ...extra.filter((clip) => clip.embedPath && ![...(reset ? [] : feed), ...additions].some((old) => old.uuid === clip.uuid))];
-            }
-        }
+        const { data: body, error } = await sb.functions.invoke('youtube-clips', { body: { query, pageToken: reset ? '' : nextPageToken } });
+        if (error || body?.error) throw new Error(error?.message || body.error);
+        const additions = (body.items || []).filter((clip) => clip.videoId && !(reset ? [] : feed).some((old) => old.videoId === clip.videoId));
         feed = reset ? additions : [...feed, ...additions];
-        exhausted = additions.length < PAGE_SIZE;
+        nextPageToken = body.nextPageToken || null;
+        exhausted = !nextPageToken;
         if (reset) index = 0;
     } finally { loading = false; }
 };

@@ -353,7 +353,7 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .conv .sub{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .conv.unread .sub.hot{color:var(--text);font-weight:600}
 .conv.unread .who b{font-weight:800}
-.camicon{display:inline-flex;align-items:center;color:var(--muted);padding:4px 6px;flex:none}
+.camicon{display:grid;place-items:center;width:40px;height:40px;padding:0;flex:none;border:1px solid #ffffff66;border-radius:12px;background:#000;color:#fff}.camicon:hover,.camicon:focus-visible{border-color:var(--accent2);color:var(--accent2);box-shadow:0 0 0 2px #00e0c622}
 
 .threadpane{display:none;flex:1;min-width:0;min-height:0;overflow:hidden;flex-direction:column}
 /* a group opens inside the thread pane — fill it rather than the whole viewport */

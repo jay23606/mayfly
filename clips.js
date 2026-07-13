@@ -5,6 +5,7 @@ import { db } from './db.js';
 // endpoint with a moderated provider before making Clips a permanent product surface.
 const PAGE_SIZE = 12;
 let feed = [], index = 0, query = 'funny', nextPageToken = null, exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
+const SEARCH_KEY = 'mayfly:clips-search', CACHE_PREFIX = 'mayfly:clips-cache:', CACHE_TTL = 6 * 60 * 60 * 1000;
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 
 const playerUrl = (clip) => `https://www.youtube-nocookie.com/embed/${clip.videoId}?autoplay=1&mute=${soundOn ? 0 : 1}&loop=1&playlist=${clip.videoId}&rel=0&playsinline=1`;
@@ -74,6 +75,15 @@ const loadMore = async (reset = false) => {
     if (loading || (!reset && exhausted)) return;
     loading = true;
     try {
+        if (reset) {
+            try {
+                const cached = JSON.parse(localStorage.getItem(CACHE_PREFIX + query) || 'null');
+                if (cached?.at > Date.now() - CACHE_TTL && Array.isArray(cached.items)) {
+                    feed = cached.items; nextPageToken = cached.nextPageToken || null; exhausted = !nextPageToken; index = 0;
+                    return;
+                }
+            } catch (e) {}
+        }
         const start = reset ? 0 : feed.length;
         const { data: body, error } = await sb.functions.invoke('youtube-clips', { body: { query, pageToken: reset ? '' : nextPageToken } });
         if (error || body?.error) throw new Error(error?.message || body.error);
@@ -82,6 +92,7 @@ const loadMore = async (reset = false) => {
         nextPageToken = body.nextPageToken || null;
         exhausted = !nextPageToken;
         if (reset) index = 0;
+        if (reset) try { localStorage.setItem(CACHE_PREFIX + query, JSON.stringify({ at: Date.now(), items: feed, nextPageToken })); } catch (e) {}
     } finally { loading = false; }
 };
 const move = async (delta) => {
@@ -98,7 +109,8 @@ export const closeClips = () => { cleanup(); cleanup = () => {}; document.queryS
 export const viewClips = async (shareText) => {
     closeClips();
     sendClipText = shareText;
-    app.innerHTML = `<main class="clipswrap"><form class="cliptop" id="clipsearch"><input class="recipsearch" id="clipquery" type="search" value="funny" placeholder="Search clips" autocomplete="off" aria-label="Search clips"><button class="clipreload">Search</button></form><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Searches public PeerTube videos. Swipe to keep watching.</p></main>`;
+    query = localStorage.getItem(SEARCH_KEY) || 'funny';
+    app.innerHTML = `<main class="clipswrap"><form class="cliptop" id="clipsearch"><input class="recipsearch" id="clipquery" type="search" value="${esc(query)}" placeholder="Search clips" autocomplete="off" aria-label="Search clips"><button class="clipreload">Search</button></form><section id="clipstage" class="clipstage" aria-live="polite"><div class="spin">Loading clips...</div></section><p class="clipnote">Searches YouTube videos. Swipe to keep watching.</p></main>`;
     const stage = document.querySelector('#clipstage');
     let startY = null, longPress = null, pressed = false;
     const clearPress = () => { clearTimeout(longPress); longPress = null; };
@@ -107,7 +119,7 @@ export const viewClips = async (shareText) => {
     const onKey = (event) => { if (event.key === 'ArrowDown' || event.key === 'PageDown') { event.preventDefault(); move(1); } if (event.key === 'ArrowUp' || event.key === 'PageUp') { event.preventDefault(); move(-1); } };
     stage.addEventListener('touchstart', onStart, { passive: true }); stage.addEventListener('touchend', onEnd, { passive: true }); stage.addEventListener('touchcancel', clearPress, { passive: true }); stage.addEventListener('pointerdown', onStart); stage.addEventListener('pointerup', onEnd); window.addEventListener('keydown', onKey);
     cleanup = () => { clearPress(); stage.removeEventListener('touchstart', onStart); stage.removeEventListener('touchend', onEnd); stage.removeEventListener('touchcancel', clearPress); stage.removeEventListener('pointerdown', onStart); stage.removeEventListener('pointerup', onEnd); window.removeEventListener('keydown', onKey); };
-    const search = async (event) => { event.preventDefault(); query = document.querySelector('#clipquery').value.trim() || 'funny'; stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) throw new Error('No clips'); renderClip(); } catch { stage.innerHTML = '<div class="empty">Clips are unavailable right now. Try another search.</div>'; } };
+    const search = async (event) => { event.preventDefault(); query = document.querySelector('#clipquery').value.trim() || 'funny'; try { localStorage.setItem(SEARCH_KEY, query); } catch (e) {} stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) throw new Error('No clips'); renderClip(); } catch { stage.innerHTML = '<div class="empty">Clips are unavailable right now. Try another search.</div>'; } };
     document.querySelector('#clipsearch').onsubmit = search;
     await search(new Event('submit'));
 };

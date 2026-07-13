@@ -114,7 +114,7 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
     } catch (e) { return null; }
 };
 const clipFromPayload = (text, me = false, at = Date.now()) => {
-    try { const p = JSON.parse(text); return p?.t === 'clip-share' && p.provider === 'youtube' && typeof p.name === 'string' && /^[\w-]{11}$/.test(p.videoId || '') ? { me, kind: 'clip', name: p.name, videoId: p.videoId, at } : null; } catch (e) { return null; }
+    try { const p = JSON.parse(text); return p?.t === 'clip-share' && p.provider === 'youtube' && typeof p.name === 'string' && /^[\w-]{11}$/.test(p.videoId || '') ? { me, kind: 'clip', name: p.name, videoId: p.videoId, caption: typeof p.caption === 'string' ? p.caption.slice(0, 240) : '', at } : null; } catch (e) { return null; }
 };
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 const ingestMessage = async (row) => {
@@ -388,7 +388,7 @@ const storyReplyBubble = (e) => {
     const preview = e.preview ? `<div class="storyreplypreview" style="aspect-ratio:${w} / ${h}"><img src="${safeMediaUrl(e.preview)}" alt="Story preview"></div>` : '';
     return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
-const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div></div>`); };
+const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div>${e.caption ? `<div class="clipcaption">${esc(e.caption)}</div>` : ''}</div>`); };
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
     else if (e.kind === 'clip') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(clipBubble(e)); body.scrollTop = body.scrollHeight; }
@@ -430,7 +430,7 @@ export const sendStoryReply = async (uid, username, text, story) => {
     const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text, w: storyW, h: storyH });
     return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, storyW, storyH, at: Date.now() });
 };
-export const sendClipShare = (uid, username, clip) => sendText(uid, username, JSON.stringify({ t: 'clip-share', provider: 'youtube', name: clip.name, videoId: clip.videoId }), { me: true, kind: 'clip', name: clip.name, videoId: clip.videoId, at: Date.now() });
+export const sendClipShare = (uid, username, clip) => sendText(uid, username, JSON.stringify({ t: 'clip-share', provider: 'youtube', name: clip.name, videoId: clip.videoId, caption: String(clip.caption || '').slice(0, 240) }), { me: true, kind: 'clip', name: clip.name, videoId: clip.videoId, caption: String(clip.caption || '').slice(0, 240), at: Date.now() });
 
 // ===================== snap opening =====================
 const openSnap = async (s, card) => {

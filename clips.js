@@ -21,7 +21,7 @@ const leaveClipFullscreen = async () => {
 const shareClip = async () => {
     const clip = feed[index]; if (!clip) return;
     document.querySelector('.clipshare')?.remove();
-    const sheet = el(`<div class="clipshare"><div class="clipsharecard"><div class="clipsharehead"><div><b>Share Clip</b><span>${esc(clip.name)}</span></div><button class="clipclose" aria-label="Close share menu">×</button></div><input class="recipsearch" id="clipfriendsearch" type="search" placeholder="Search friends" autocomplete="off"><div class="recips" id="clipfriends"><div class="spin">Loading friends...</div></div><button class="btn" id="clipsharego" disabled>Share</button></div></div>`);
+    const sheet = el(`<div class="clipshare"><div class="clipsharecard"><div class="clipsharehead"><div><b>Share Clip</b><span>${esc(clip.name)}</span></div><button class="clipclose" aria-label="Close share menu">×</button></div><input class="recipsearch" id="clipcaption" maxlength="240" placeholder="Add a message…" autocomplete="off"><input class="recipsearch" id="clipfriendsearch" type="search" placeholder="Search friends" autocomplete="off"><div class="recips" id="clipfriends"><div class="spin">Loading friends...</div></div><button class="btn" id="clipsharego" disabled>Share</button></div></div>`);
     (document.fullscreenElement || document.body).appendChild(sheet);
     const close = () => sheet.remove();
     sheet.querySelector('.clipclose').onclick = close;
@@ -46,7 +46,8 @@ const shareClip = async () => {
     send.onclick = async () => {
         send.disabled = true; send.textContent = 'Sharing...';
         let sent = 0;
-        for (const friend of friends.filter((item) => chosen.has(item.id))) if (await sendClipText?.(friend.id, friend.username || 'Friend', clip)) sent++;
+        const caption = sheet.querySelector('#clipcaption').value.trim();
+        for (const friend of friends.filter((item) => chosen.has(item.id))) if (await sendClipText?.(friend.id, friend.username || 'Friend', { ...clip, caption })) sent++;
         close(); toast(sent ? `Shared with ${sent} friend${sent === 1 ? '' : 's'}.` : 'Could not share that clip.');
     };
 };

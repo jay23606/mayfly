@@ -5,6 +5,12 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+const decodeTitle = (value: string) => value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, code) => {
+  const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+  if (named[code.toLowerCase()]) return named[code.toLowerCase()];
+  const point = code.toLowerCase().startsWith("#x") ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+  return Number.isFinite(point) ? String.fromCodePoint(point) : entity;
+});
 
 serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -21,7 +27,7 @@ serve(async (request) => {
     details.search = new URLSearchParams({ key, part: "status", id: ids.join(",") }).toString();
     const status = await fetch(details).then(async (r) => { if (!r.ok) throw new Error(`YouTube video check failed (${r.status})`); return r.json(); });
     const allowed = new Set((status.items || []).filter((item: any) => item.status?.embeddable && !item.status?.madeForKids).map((item: any) => item.id));
-    const items = (searchJson.items || []).filter((item: any) => allowed.has(item.id?.videoId)).map((item: any) => ({ provider: "youtube", videoId: item.id.videoId, name: item.snippet.title, channel: item.snippet.channelTitle, thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || "" }));
+    const items = (searchJson.items || []).filter((item: any) => allowed.has(item.id?.videoId)).map((item: any) => ({ provider: "youtube", videoId: item.id.videoId, name: decodeTitle(item.snippet.title), channel: decodeTitle(item.snippet.channelTitle), thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || "" }));
     return Response.json({ items, nextPageToken: searchJson.nextPageToken || null }, { headers: { ...cors, "Cache-Control": "private, max-age=300" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Could not load clips" }, { status: 500, headers: cors });

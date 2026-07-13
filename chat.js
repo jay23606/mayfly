@@ -116,6 +116,7 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
 const clipFromPayload = (text, me = false, at = Date.now()) => {
     try { const p = JSON.parse(text); return p?.t === 'clip-share' && p.provider === 'youtube' && typeof p.name === 'string' && /^[\w-]{11}$/.test(p.videoId || '') ? { me, kind: 'clip', name: p.name, videoId: p.videoId, at } : null; } catch (e) { return null; }
 };
+const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return false; }
@@ -387,7 +388,7 @@ const storyReplyBubble = (e) => {
     const preview = e.preview ? `<div class="storyreplypreview" style="aspect-ratio:${w} / ${h}"><img src="${safeMediaUrl(e.preview)}" alt="Story preview"></div>` : '';
     return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
-const clipBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(e.name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(e.name)}</div></div>`);
+const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div></div>`); };
 const appendEntry = (e) => {
     if (e.kind === 'story-reply') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(storyReplyBubble(e)); body.scrollTop = body.scrollHeight; }
     else if (e.kind === 'clip') { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(clipBubble(e)); body.scrollTop = body.scrollHeight; }

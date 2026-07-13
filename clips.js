@@ -5,6 +5,7 @@ import { db } from './db.js';
 // endpoint with a moderated provider before making Clips a permanent product surface.
 const PAGE_SIZE = 12;
 let feed = [], index = 0, query = 'funny', nextPageToken = null, exhausted = false, loading = false, soundOn = false, cleanup = () => {}, sendClipText = null;
+const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 
 const playerUrl = (clip) => `https://www.youtube-nocookie.com/embed/${clip.videoId}?autoplay=1&mute=${soundOn ? 0 : 1}&loop=1&playlist=${clip.videoId}&rel=0&playsinline=1`;
 const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.requester;
@@ -53,10 +54,10 @@ const shareClip = async () => {
 const renderClip = () => {
     const stage = document.querySelector('#clipstage');
     if (!stage || !feed[index]) return;
-    const clip = feed[index];
+    const clip = feed[index], title = decodeTitle(feed[index].name);
     stage.innerHTML = '';
-    const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
-    const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.channel || 'YouTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
+    const frame = el(`<iframe class="clipplayer" title="${esc(title)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
+    const meta = el(`<div class="clipmeta"><b>${esc(title)}</b><span>${esc(decodeTitle(clip.channel || 'YouTube'))}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
     const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">⛶</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">⤴</button></div>`);
     controls.querySelector('.clipaudio').onclick = async () => {
         soundOn = !soundOn;

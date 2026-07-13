@@ -728,7 +728,7 @@ const renderFriends = async () => {
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}
             <div class="who"><button class="profilelink">${esc(u.username)}</button>
               <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
-            <div class="acts"><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
+            <div class="acts"><button class="rowaction chatbtn" data-go="#/c/${u.id}" aria-label="Chat with ${esc(u.username)}" title="Chat">${icon('messageSquare', 20)}</button><button class="rowaction snapbtn" aria-label="Send a Snap to ${esc(u.username)}" title="Send Snap">${icon('camera', 20)}</button></div></div>`);
         $('.profilelink', row).onclick = () => { location.hash = '#/profile/' + u.id; };
         $('.snapbtn', row).onclick = () => { location.hash = '#/snap/' + u.id; };
         box.appendChild(row);

@@ -686,7 +686,8 @@ const renderDiscover = async (q) => {
     list.forEach(p => {
         const row = el(`<div class="urow" data-uid="${p.id}">${avatarHTML(p.username, p.avatar)}
             <div class="who"><b>${esc(p.username)}</b>${isOnline(p.id) ? '<div class="sub"><i class="dot"></i>online</div>' : ''}</div>
-            <div class="acts"><button class="pill primary addbtn">Add</button><button class="pill hidebtn" aria-label="Hide">✕</button></div></div>`);
+            <div class="acts"><button class="pill profilebtn">Profile</button><button class="pill primary addbtn">Add</button><button class="pill hidebtn" aria-label="Hide">✕</button></div></div>`);
+        $('.profilebtn', row).onclick = () => { location.hash = '#/profile/' + p.id; };
         $('.addbtn', row).onclick = async () => {
             const b = $('.addbtn', row); b.disabled = true;
             const { error } = await db.sendRequest(p.id);
@@ -727,7 +728,8 @@ const renderFriends = async () => {
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}
             <div class="who"><b>${esc(u.username)}</b>
               <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
-            <div class="acts"><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
+            <div class="acts"><button class="pill profilebtn">Profile</button><button class="pill chatbtn" data-go="#/c/${u.id}">Chat</button><button class="pill snapbtn">Snap</button></div></div>`);
+        $('.profilebtn', row).onclick = () => { location.hash = '#/profile/' + u.id; };
         $('.snapbtn', row).onclick = () => { location.hash = '#/snap/' + u.id; };
         box.appendChild(row);
     });
@@ -745,6 +747,9 @@ const viewMe = () => {
       </div>
       <label class="lbl">Username</label>
       <input class="field" id="muser" value="${esc(p.username)}" autocomplete="off">
+      <label class="lbl">Public profile</label>
+      <textarea class="field profilebio" id="mbio" maxlength="200" placeholder="Tell people a little about yourself…">${esc(p.bio || '')}</textarea>
+      <div class="muted tiny" id="biocount">${String(p.bio || '').length}/200</div>
       <div class="err" id="merr"></div>
       <button class="btn" id="msave">Save</button>
       <button class="pill" id="mmemories">Memories</button>
@@ -755,6 +760,8 @@ const viewMe = () => {
     </main>`;
     let newAvatar = null;
     $('#mmemories').onclick = () => { location.hash = '#/memories'; };
+    const bio = $('#mbio'), bioCount = $('#biocount');
+    bio.oninput = () => { bioCount.textContent = `${bio.value.length}/200`; };
     $('#mpick').onclick = () => $('#mfile').click();
     $('#mfile').onchange = async () => {
         const f = $('#mfile').files[0]; if (!f) return;
@@ -764,7 +771,9 @@ const viewMe = () => {
     $('#msave').onclick = async () => {
         const username = $('#muser').value.trim();
         if (!/^[a-z0-9_.]{3,20}$/i.test(username)) return void ($('#merr').textContent = 'Username: 3–20 letters, numbers, _ or .');
-        const patch = { username }; if (newAvatar) patch.avatar = newAvatar;
+        const profileBio = bio.value.trim();
+        if (profileBio.length > 200) return void ($('#merr').textContent = 'Public profile: up to 200 characters.');
+        const patch = { username, bio: profileBio }; if (newAvatar) patch.avatar = newAvatar;
         const { error } = await db.updateProfile(patch);
         if (error) return void ($('#merr').textContent = /duplicate|unique/i.test(error.message) ? 'That username is taken.' : error.message);
         Object.assign(state.profile, patch); mountChrome(true); toast('Saved');
@@ -819,6 +828,13 @@ const viewMe = () => {
     $('#mout').onclick = async () => { stopStream(); await sb.auth.signOut(); };
 };
 
+const viewPublicProfile = async (uid) => {
+    const { data: p, error } = await db.profileById(uid);
+    if (error || !p) { app.innerHTML = '<main><div class="empty">That profile is unavailable.</div></main>'; return; }
+    const mine = uid === state.me.id;
+    app.innerHTML = `<main class="publicprofile"><button class="btn ghost inline" data-go="#/friends">‹ Back</button><div class="avatar publicavatar">${isMediaUrl(p.avatar) ? `<img src="${p.avatar}" alt="${esc(p.username)}">` : initial(p.username)}</div><h1 class="vtitle">${esc(p.username)}</h1><p class="publicbio">${esc(p.bio || 'No public description yet.')}</p><div class="profileactions">${mine ? '<button class="pill primary" data-go="#/me">Edit profile</button>' : `<button class="pill primary" data-go="#/c/${p.id}">Chat</button>`}</div></main>`;
+};
+
 // ===================== chrome + router =====================
 const tabbar = () => `<nav id="tabbar" aria-label="Primary">
     <button class="tab" data-go="#/chats" aria-label="Chats">💬<span class="badge-count" id="chatdot"></span></button>
@@ -867,6 +883,7 @@ const route = () => {
             compose(shot, null, null, toStory, item.caption || '');
         } catch (e) { toast('Could not open that Memory.'); }
     });
+    if (seg === 'profile' && arg) return viewPublicProfile(arg);
     return viewChats();
 };
 const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };

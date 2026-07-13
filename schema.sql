@@ -20,9 +20,13 @@ create table if not exists public.mf_profiles (
   id         uuid primary key references auth.users(id) on delete cascade,
   username   text unique not null,
   avatar     text not null default '',
+  bio        text not null default '',
   pubkey     text not null default '',
   created_at timestamptz not null default now()
 );
+alter table public.mf_profiles add column if not exists bio text not null default '';
+alter table public.mf_profiles drop constraint if exists mf_profiles_bio_length;
+alter table public.mf_profiles add constraint mf_profiles_bio_length check (char_length(bio) <= 200);
 alter table public.mf_profiles enable row level security;
 drop policy if exists "mf_profiles_select" on public.mf_profiles;
 create policy "mf_profiles_select" on public.mf_profiles for select using (true);

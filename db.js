@@ -1,7 +1,7 @@
 import { sb, state } from './core.js';
 
 // ===================== data access (all mf_-prefixed) =====================
-const PROF = 'id, username, avatar, pubkey';
+const PROF = 'id, username, avatar, bio, pubkey';
 const db = {
     // ---- profiles ----
     myProfile: () => sb.from('mf_profiles').select('*').eq('id', state.me.id).maybeSingle(),

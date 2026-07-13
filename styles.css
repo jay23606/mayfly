@@ -49,7 +49,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 /* ---------- Clips ---------- */
 .clipswrap{max-width:560px;padding-top:0}
 .cliptop{display:flex;align-items:center;gap:8px;margin:4px 4px 10px}
-.clipchips{display:flex;gap:7px;overflow-x:auto;padding:0 4px 9px;scrollbar-width:none}.clipchips button{flex:none;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}.clipchips button.on{background:var(--grad);border-color:transparent;color:#0a0a0f;font-weight:700}
+.clipchips{display:flex;flex-wrap:wrap;gap:7px;padding:0 4px 9px}.clipchips button{flex:none;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}.clipchips button.on{background:var(--grad);border-color:transparent;color:#0a0a0f;font-weight:700}
 .clipreload{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:8px 12px;cursor:pointer;font:inherit;font-size:13px}
 .clipstage{position:relative;height:min(68vh,720px);min-height:420px;border-radius:24px;overflow:hidden;background:#000;touch-action:pan-x;isolation:isolate}
 .clipplayer{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:none}

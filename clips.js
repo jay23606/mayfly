@@ -66,7 +66,7 @@ const loadMore = async (reset = false) => {
         if (reset) try { localStorage.setItem(CACHE_PREFIX + `${mode}:${channelId}:${query}`, JSON.stringify({ items: feed, nextPageToken })); } catch (e) {}
     } finally { loading = false; }
 };
-const startFeed = async () => { const stage = document.querySelector('#clipstage'); if (stage) stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) throw new Error('No clips'); renderClip(); } catch { if (stage) stage.innerHTML = '<div class="empty">No clips are available here right now.</div>'; } };
+const startFeed = async () => { const stage = document.querySelector('#clipstage'); if (stage) stage.innerHTML = '<div class="spin">Loading clips...</div>'; try { await loadMore(true); if (!feed.length) { if (stage) stage.innerHTML = `<div class="empty">${mode === 'saved' ? 'No saved Clips yet — use ★ on a clip to keep it here.' : 'No clips are available here right now.'}</div>`; return; } renderClip(); } catch { if (stage) stage.innerHTML = '<div class="empty">No clips are available here right now.</div>'; } };
 const move = async (delta) => { const next = index + delta; if (next < 0) return; if (next >= feed.length) await loadMore(); if (next >= feed.length && exhausted && feed.length) { index = 0; renderClip(); } else if (next < feed.length) { index = next; rememberInterest(feed[index], .05); renderClip(); } };
 export const closeClips = () => { cleanup(); cleanup = () => {}; document.querySelector('.clipshare')?.remove(); prefetch?.remove(); prefetch = null; try { screen.orientation?.unlock?.(); } catch (e) {} };
 

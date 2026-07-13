@@ -342,7 +342,7 @@ export const openConversation = async (box, uid) => {
     let replyDraft = null;
     const replyBar = $('#replydraft');
     setReplyDraft = (entry) => {
-        replyDraft = { text: String(entry.text || entry.name || 'Message').slice(0, 240) };
+        replyDraft = { text: String(entry.text || entry.name || entry.title || (entry.type === 'sticker' ? 'Sticker' : entry.type === 'gif' ? 'GIF' : 'Message')).slice(0, 240) };
         $('span', replyBar).textContent = `Replying to: ${replyDraft.text}`; replyBar.hidden = false; input.focus();
     };
     $('button', replyBar).onclick = () => { replyDraft = null; replyBar.hidden = true; };
@@ -388,13 +388,13 @@ const renderThreadBody = async (uid, preserveScroll = false) => {
             const e = it.entry;
             if (e.kind === 'text') {
                 const sharedGif = gifFromPayload(e.text, e.me, e.at), sharedClip = clipFromPayload(e.text, e.me, e.at);
-                body.appendChild(sharedGif ? gifBubble(sharedGif) : (sharedClip ? clipBubble(sharedClip) : textBubble(uid, e)));
+                body.appendChild(sharedGif ? messageCard(uid, e, gifBubble(sharedGif)) : (sharedClip ? messageCard(uid, e, clipBubble(sharedClip)) : textBubble(uid, e)));
             }
-            else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
-            else if (e.kind === 'clip') body.appendChild(clipBubble(e));
-            else if (e.kind === 'gif') body.appendChild(gifBubble(e));
+            else if (e.kind === 'story-reply') body.appendChild(messageCard(uid, e, storyReplyBubble(e)));
+            else if (e.kind === 'clip') body.appendChild(messageCard(uid, e, clipBubble(e)));
+            else if (e.kind === 'gif') body.appendChild(messageCard(uid, e, gifBubble(e)));
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
-            else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
+            else if (e.kind === 'media') body.appendChild(messageCard(uid, e, mediaBubble(e, e.me ? 'me' : 'them')));
         }
     }
     // one Delivered/Sent receipt under the most recent message, only if it's one you sent
@@ -416,14 +416,13 @@ const updateLocalEntry = async (uid, localId, update) => {
     await histUpdate(uid, (history) => { const entry = history.find(x => x.localId === localId); if (entry) update(entry, history); });
     if (openUid === uid) renderThreadBody(uid, true);
 };
-const textBubble = (uid, e) => {
-    const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
-    const reaction = e.reaction ? `<span class="localreaction">${esc(e.reaction)}</span>` : '';
-    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="b ${e.me ? 'me' : 'them'} ${e.saved ? 'saved' : ''}">${reply}${esc(e.text)}${reaction}</div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 18)}</button><button data-action="love" aria-label="Like" title="Like">${icon('heart', 18)}</button><button data-action="react" aria-label="Thumbs up" title="Thumbs up">${icon('thumbsUp', 18)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 18)}</button><button data-action="delete" aria-label="Delete from this device" title="Delete from this device">${icon('trash', 18)}</button></div></div>`);
+const messageCard = (uid, e, content) => {
+    if (e.saved) content.classList.add('saved');
+    if (e.reaction) content.appendChild(el(`<span class="localreaction">${esc(e.reaction)}</span>`));
+    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="messagecontent"></div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 18)}</button><button data-action="love" aria-label="Like" title="Like">${icon('heart', 18)}</button><button data-action="react" aria-label="Thumbs up" title="Thumbs up">${icon('thumbsUp', 18)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 18)}</button><button data-action="delete" aria-label="Delete from this device" title="Delete from this device">${icon('trash', 18)}</button></div></div>`);
+    card.querySelector('.messagecontent').appendChild(content);
     const menu = card.querySelector('.messagemenu');
-    card.querySelector('.messagemore').onclick = (event) => {
-        event.stopPropagation(); const opening = menu.hidden; closeMessageMenus(menu); menu.hidden = !opening;
-    };
+    card.querySelector('.messagemore').onclick = (event) => { event.stopPropagation(); const opening = menu.hidden; closeMessageMenus(menu); menu.hidden = !opening; };
     menu.onclick = async (event) => {
         const action = event.target.closest?.('[data-action]')?.dataset.action; if (!action) return;
         event.stopPropagation(); menu.hidden = true;
@@ -434,6 +433,10 @@ const textBubble = (uid, e) => {
     };
     return card;
 };
+const textBubble = (uid, e) => {
+    const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
+    return messageCard(uid, e, el(`<div class="b ${e.me ? 'me' : 'them'}">${reply}${esc(e.text)}</div>`));
+};
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
 const storyReplyBubble = (e) => {
     const w = Math.max(1, Math.min(4096, Number(e.storyW) || 4)), h = Math.max(1, Math.min(4096, Number(e.storyH) || 3));
@@ -443,7 +446,6 @@ const storyReplyBubble = (e) => {
 const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div>${e.caption ? `<div class="clipcaption">${esc(e.caption)}</div>` : ''}</div>`); };
 const gifBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} gifbubble ${e.type}"><img src="${esc(e.url)}" alt="${esc(e.title || e.type)}" loading="lazy" referrerpolicy="no-referrer"><span>${e.type === 'sticker' ? 'Sticker · GIPHY' : 'GIF · GIPHY'}</span></div>`);
 const appendEntry = () => { if (openUid) renderThreadBody(openUid); };
-const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 
 // ---- send an async encrypted text ----
 export const sendText = async (uid, username, text, localEntry = null) => {
@@ -641,7 +643,9 @@ const sendFile = async (uid, file, kind) => {
     });
     await c.sendQ;
     const m = { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now() };
-    appendMedia(m, 'me'); histPush(uid, m);
+    await histPush(uid, m);
+    if (openUid === uid) renderThreadBody(uid);
+    if (convBox) renderConvs(convBox, openUid);
 };
 const wireMic = (box, uid) => {
     let rec = null, stream = null, chunks = [], cancelled = false, draft = null, draftUrl = null, starting = false;
@@ -694,7 +698,7 @@ const wire = (uid, conn) => {
         if (d.t === 'typing') { const el2 = $('#ctyping'); if (el2 && openUid === uid) el2.textContent = 'typing…'; return; }
         if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
         if (d.t === 'file-meta') { binRx = { meta: d, chunks: [] }; return; }
-        if (d.t === 'file-done' && binRx) { const it = binRx; binRx = null; blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; if (openUid === uid) appendMedia(m, 'them'); else { unreadMsg.add(uid); onChange(); } histPush(uid, m); if (convBox) renderConvs(convBox, openUid); }); return; }
+        if (d.t === 'file-done' && binRx) { const it = binRx; binRx = null; blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(async data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; await histPush(uid, m); if (openUid === uid) renderThreadBody(uid); else { unreadMsg.add(uid); onChange(); } if (convBox) renderConvs(convBox, openUid); }); return; }
     });
     conn.on('chunk', (ab) => { if (binRx) binRx.chunks.push(ab); });
     conn.on('close', () => { if (conns.get(uid) === conn) conns.delete(uid); });

@@ -87,6 +87,7 @@ const lastLine = (h) => {
     return m.kind === 'text' ? (m.me ? 'You: ' : '') + m.text
         : m.kind === 'story-reply' ? (m.me ? 'You: ' : '') + 'Story reply'
         : m.kind === 'snap' ? '📷 You sent a Snap'
+        : m.kind === 'gif' ? (m.me ? 'You: ' : '') + (m.type === 'sticker' ? 'Sticker' : 'GIF')
         : m.kind === 'media' ? (m.me ? 'You: ' : '') + '📎 ' + (m.name || m.mediaKind || 'attachment') : '';
 };
 
@@ -119,6 +120,9 @@ const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPre
 const clipFromPayload = (text, me = false, at = Date.now()) => {
     try { const p = JSON.parse(text); return p?.t === 'clip-share' && p.provider === 'youtube' && typeof p.name === 'string' && /^[\w-]{11}$/.test(p.videoId || '') ? { me, kind: 'clip', name: p.name, videoId: p.videoId, caption: typeof p.caption === 'string' ? p.caption.slice(0, 240) : '', at } : null; } catch (e) { return null; }
 };
+const gifFromPayload = (text, me = false, at = Date.now()) => {
+    try { const p = JSON.parse(text), url = new URL(p?.url || ''); if (p?.t !== 'gif-share' || p.provider !== 'giphy' || !['gif', 'sticker'].includes(p.type) || !/^(media\d*|i)\.giphy\.com$/i.test(url.hostname)) return null; return { me, kind: 'gif', type: p.type, url: url.href, title: typeof p.title === 'string' ? p.title.slice(0, 160) : p.type, at }; } catch (e) { return null; }
+};
 const replyFromPayload = (text, me = false, at = Date.now()) => {
     try { const p = JSON.parse(text); return p?.t === 'chat-reply' && typeof p.text === 'string' && typeof p.reply === 'string' ? { me, kind: 'text', text: p.text.slice(0, MSG_MAX), replyTo: p.reply.slice(0, 240), at } : null; } catch (e) { return null; }
 };
@@ -127,7 +131,7 @@ const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return false; }
     const at = new Date(row.created_at).getTime();
-    const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+    const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || gifFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
@@ -315,6 +319,7 @@ export const openConversation = async (box, uid) => {
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
           <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
           <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
+          <button type="button" class="icon gifbtn" aria-label="GIFs and Stickers"><span class="gifmark">GIF</span></button>
           <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
           <input type="file" class="fileinput" hidden>
         </form>
@@ -327,6 +332,7 @@ export const openConversation = async (box, uid) => {
         menu.hidden = true; await clearConversation(uid); toast('Chat cleared on this device.');
     };
     $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
+    $('.gifbtn', box).onclick = () => openGifPicker(uid, username);
     const fileInput = $('.fileinput', box);
     // Files are live-only (no relay) — don't open the picker if it can't be sent.
     $('.attach', box).onclick = () => isOnline(uid) ? fileInput.click() : appendBubble('(files only send while your friend is online)', 'sys');
@@ -381,11 +387,12 @@ const renderThreadBody = async (uid, preserveScroll = false) => {
         else {
             const e = it.entry;
             if (e.kind === 'text') {
-                const sharedClip = clipFromPayload(e.text, e.me, e.at);
-                body.appendChild(sharedClip ? clipBubble(sharedClip) : textBubble(uid, e));
+                const sharedGif = gifFromPayload(e.text, e.me, e.at), sharedClip = clipFromPayload(e.text, e.me, e.at);
+                body.appendChild(sharedGif ? gifBubble(sharedGif) : (sharedClip ? clipBubble(sharedClip) : textBubble(uid, e)));
             }
             else if (e.kind === 'story-reply') body.appendChild(storyReplyBubble(e));
             else if (e.kind === 'clip') body.appendChild(clipBubble(e));
+            else if (e.kind === 'gif') body.appendChild(gifBubble(e));
             else if (e.kind === 'snap') body.appendChild(el(snapReceipt(e)));
             else if (e.kind === 'media') body.appendChild(mediaBubble(e, e.me ? 'me' : 'them'));
         }
@@ -434,6 +441,7 @@ const storyReplyBubble = (e) => {
     return el(`<div class="b ${e.me ? 'me' : 'them'} storyreplymsg"><div class="storyreplylabel">↩ Reply to Story</div>${preview}<div class="storyreplytext">${esc(e.text || 'Story reply')}</div></div>`);
 };
 const clipBubble = (e) => { const name = decodeTitle(e.name); return el(`<div class="b ${e.me ? 'me' : 'them'} clipbubble"><div class="storyreplylabel">YouTube Clip</div><iframe class="clipembed" title="${esc(name)}" src="https://www.youtube-nocookie.com/embed/${e.videoId}?autoplay=0&rel=0&playsinline=1" allow="autoplay; fullscreen; picture-in-picture"></iframe><div class="storyreplytext">${esc(name)}</div>${e.caption ? `<div class="clipcaption">${esc(e.caption)}</div>` : ''}</div>`); };
+const gifBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} gifbubble ${e.type}"><img src="${esc(e.url)}" alt="${esc(e.title || e.type)}" loading="lazy" referrerpolicy="no-referrer"><span>${e.type === 'sticker' ? 'Sticker · GIPHY' : 'GIF · GIPHY'}</span></div>`);
 const appendEntry = () => { if (openUid) renderThreadBody(openUid); };
 const appendMedia = (m, cls) => { const body = $('#tbody'); if (!body) return; body.appendChild(mediaBubble(m, cls)); body.scrollTop = body.scrollHeight; };
 
@@ -468,6 +476,26 @@ export const sendStoryReply = async (uid, username, text, story) => {
     return sendText(uid, username, payload, { me: true, kind: 'story-reply', text, storyId: story.id, preview: story.preview, storyW, storyH, at: Date.now() });
 };
 export const sendClipShare = (uid, username, clip) => sendText(uid, username, JSON.stringify({ t: 'clip-share', provider: 'youtube', name: clip.name, videoId: clip.videoId, caption: String(clip.caption || '').slice(0, 240) }), { me: true, kind: 'clip', name: clip.name, videoId: clip.videoId, caption: String(clip.caption || '').slice(0, 240), at: Date.now() });
+const sendGifShare = (uid, username, gif) => sendText(uid, username, JSON.stringify({ t: 'gif-share', provider: 'giphy', type: gif.type, url: gif.url, title: gif.title }), { me: true, kind: 'gif', type: gif.type, url: gif.url, title: gif.title, at: Date.now() });
+
+const openGifPicker = (uid, username) => {
+    document.querySelector('.gifpicker')?.remove();
+    let type = 'gif', timer = null;
+    const sheet = el(`<div class="gifpicker"><div class="gifpickercard"><div class="gifpickerhead"><b>GIFs & Stickers</b><button class="gifclose" aria-label="Close">×</button></div><div class="giftypes"><button class="on" data-type="gif">GIFs</button><button data-type="sticker">Stickers</button></div><input class="recipsearch" id="gifsearch" type="search" placeholder="Search GIFs" autocomplete="off"><div class="gifresults"><div class="spin">Loading…</div></div><div class="gifcredit">Powered by GIPHY</div></div></div>`);
+    document.body.appendChild(sheet);
+    const close = () => sheet.remove(), input = sheet.querySelector('#gifsearch'), results = sheet.querySelector('.gifresults');
+    sheet.querySelector('.gifclose').onclick = close; sheet.onclick = event => { if (event.target === sheet) close(); };
+    const load = async () => {
+        results.innerHTML = '<div class="spin">Loading…</div>';
+        const { data, error } = await sb.functions.invoke('giphy', { body: { query: input.value.trim(), type: type === 'sticker' ? 'stickers' : 'gifs' } });
+        if (error || data?.error || !data?.items?.length) { results.innerHTML = '<div class="empty">No GIFs found. Try another search.</div>'; return; }
+        results.innerHTML = '';
+        data.items.forEach(gif => { const button = el(`<button class="gifresult" title="${esc(gif.title)}"><img src="${esc(gif.preview)}" alt="${esc(gif.title)}" loading="lazy"></button>`); button.onclick = async () => { button.disabled = true; await sendGifShare(uid, username, gif); close(); }; results.appendChild(button); });
+    };
+    sheet.querySelector('.giftypes').onclick = event => { const next = event.target.dataset.type; if (!next) return; type = next; sheet.querySelectorAll('.giftypes button').forEach(button => button.classList.toggle('on', button.dataset.type === type)); input.placeholder = type === 'sticker' ? 'Search stickers' : 'Search GIFs'; load(); };
+    input.oninput = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
+    load();
+};
 
 // ===================== snap opening =====================
 const openSnap = async (s, card) => {

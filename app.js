@@ -829,10 +829,15 @@ const viewMe = () => {
 };
 
 const viewPublicProfile = async (uid) => {
-    const { data: p, error } = await db.profileById(uid);
+    const [{ data: p, error }, { data: friendCount }] = await Promise.all([db.profileById(uid), db.publicFriendCount(uid)]);
     if (error || !p) { app.innerHTML = '<main><div class="empty">That profile is unavailable.</div></main>'; return; }
     const mine = uid === state.me.id;
+    const joined = new Date(p.created_at);
+    const joinedLabel = Number.isNaN(joined.getTime()) ? '' : `Joined ${joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`;
+    const count = Math.max(0, Number(friendCount) || 0);
     app.innerHTML = `<main class="publicprofile"><button class="btn ghost inline" data-go="#/friends">‹ Back</button><div class="avatar publicavatar">${isMediaUrl(p.avatar) ? `<img src="${p.avatar}" alt="${esc(p.username)}">` : initial(p.username)}</div><h1 class="vtitle">${esc(p.username)}</h1><p class="publicbio">${esc(p.bio || 'No public description yet.')}</p><div class="profileactions">${mine ? '<button class="pill primary" data-go="#/me">Edit profile</button>' : `<button class="pill primary" data-go="#/c/${p.id}">Chat</button>`}</div></main>`;
+    const bio = $('.publicbio');
+    if (bio) bio.insertAdjacentHTML('beforebegin', `<div class="profilestats"><span>${count} friend${count === 1 ? '' : 's'}</span>${joinedLabel ? `<span class="statdot" aria-hidden="true">·</span><span>${joinedLabel}</span>` : ''}</div>`);
 };
 
 // ===================== chrome + router =====================

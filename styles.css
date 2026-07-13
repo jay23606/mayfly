@@ -98,6 +98,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .field:focus{border-color:var(--accent)}
 .profilebio{min-height:86px;resize:vertical;font-family:inherit;line-height:1.4}.publicprofile{display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:18px}.publicavatar{width:min(72vw,260px)!important;height:min(72vw,260px)!important;font-size:76px;margin:14px 0 2px;box-shadow:0 12px 40px #0008}.publicbio{max-width:420px;white-space:pre-wrap;line-height:1.45;color:var(--muted);margin:0 8px 16px}.profileactions{display:flex;gap:8px}
 .searchbar{margin:6px 0 4px}
+.profilestats{display:flex;align-items:center;justify-content:center;gap:7px;color:var(--muted);font-size:13px;margin:1px 0 13px}.statdot{color:var(--line2)}
 .memorieshead{display:flex;align-items:center;justify-content:space-between;gap:12px}.memorieshead .vtitle{margin-bottom:0}.memorieshead p{margin:2px 4px 10px}
 .memoriesgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.memoriesgrid .empty,.memoriesgrid .spin{grid-column:1/-1}
 .memorycard{position:relative;min-height:160px;overflow:hidden;border-radius:16px;background:var(--panel2);border:1px solid var(--line);cursor:pointer}.memorycard:hover,.memorycard:focus-visible{border-color:var(--accent2);box-shadow:0 0 0 2px #00e0c622}.memorycard img,.memorycard video{display:block;width:100%;height:190px;object-fit:cover;background:#000;pointer-events:none}

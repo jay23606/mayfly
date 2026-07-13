@@ -1,12 +1,13 @@
 import { sb, state } from './core.js';
 
 // ===================== data access (all mf_-prefixed) =====================
-const PROF = 'id, username, avatar, bio, pubkey';
+const PROF = 'id, username, avatar, bio, pubkey, created_at';
 const db = {
     // ---- profiles ----
     myProfile: () => sb.from('mf_profiles').select('*').eq('id', state.me.id).maybeSingle(),
     profile:   (username) => sb.from('mf_profiles').select('*').eq('username', username).maybeSingle(),
     profileById: (id) => sb.from('mf_profiles').select(PROF).eq('id', id).maybeSingle(),
+    publicFriendCount: (id) => sb.rpc('mf_public_friend_count', { profile_id: id }),
     updateProfile: (patch) => sb.from('mf_profiles').update(patch).eq('id', state.me.id),
     adminDeleteUser: (targetId) => sb.functions.invoke('admin-delete-user', { body: { targetId } }),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),

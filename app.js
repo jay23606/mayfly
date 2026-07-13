@@ -213,7 +213,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
 // ===================== compose: caption, timer, choose friends, send =====================
 // A Snap normally stays in the recipient's chat. A positive timer makes it view-once.
 let timer = 0;
-const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) => {
+const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, initialStory = false, initialCaption = '') => {
     stopStream();
     const isVideo = shot.mime?.startsWith('video/');
     timer = 0;
@@ -223,7 +223,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
     app.innerHTML = `<main class="composewrap">
       <div class="preview ${isVideo ? 'video' : ''}" ${isVideo ? '' : `style="background-image:url('${safeMediaUrl(previewUrl)}')"`}>
         ${isVideo ? `<video class="composevideo" src="${safeMediaUrl(previewUrl)}" autoplay muted loop playsinline></video>` : ''}
-        <input id="cap" class="capinput" placeholder="Add a caption…" maxlength="120" autocomplete="off">
+        <input id="cap" class="capinput" value="${esc(initialCaption)}" placeholder="Add a caption…" maxlength="120" autocomplete="off">
         <div class="timerpick"><button class="tchip ${timer === 0 ? 'on' : ''}" data-t="0">Keep</button>${[3, 5, 10].map(t => `<button class="tchip ${t === timer ? 'on' : ''}" data-t="${t}">${t}s</button>`).join('')}</div>
         <button class="retake" id="retake" aria-label="Retake">✕</button>
       </div>
@@ -257,7 +257,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null) =
     const chosen = new Set(), chosenGroups = new Set();
     const RECENT_FRIEND_LIMIT = 50;
     const ALL_FRIENDS_LIMIT = 100;
-    let toStory = false, allFriends = false;
+    let toStory = initialStory, allFriends = false;
     const send = $('#send');
     const [{ data: friends }, { data: groups }] = await Promise.all([db.friends(), db.myGroups()]);
     const box = $('#recips'); if (!box) return;
@@ -860,7 +860,13 @@ const route = () => {
     if (seg === 'groupsnap' && arg) return viewCamera(null, arg);
     if (seg === 'group' && arg) return viewChats(null, arg);
     if (seg === 'me') return viewMe();
-    if (seg === 'memories') return viewMemories();
+    if (seg === 'memories') return viewMemories(async (item, blob, toStory) => {
+        try {
+            if (toStory && item.mime?.startsWith('video/')) return toast('Video Memories cannot be added to Stories yet.');
+            const shot = item.mime?.startsWith('video/') ? await processVideo(blob) : await processImage(blob);
+            compose(shot, null, null, toStory, item.caption || '');
+        } catch (e) { toast('Could not open that Memory.'); }
+    });
     return viewChats();
 };
 const setChatDot = () => { const d = $('#chatdot'); if (d) { const n = chatUnread(); d.textContent = n > 9 ? '9+' : n; d.classList.toggle('on', n > 0); } };

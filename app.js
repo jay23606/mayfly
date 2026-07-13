@@ -12,6 +12,9 @@ import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupDat
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
 const RELAY_TTL_DAYS = 7;    // an offline snap self-destructs a week after it's sent if never opened
+// The database RPC below independently verifies this immutable auth-user ID.
+// This client check only controls whether the management UI is shown.
+const MAYFLY_ADMIN_ID = '2f43626a-3056-402d-9daf-b0de5193a2f8';
 window.addEventListener('unhandledrejection', (e) => console.error('[mayfly] unhandled rejection:', e.reason));
 // Mobile browser chrome can change the visible viewport while a thread is being
 // pulled or scrolled. Drive chat layout from VisualViewport so its composer stays
@@ -725,6 +728,7 @@ const renderFriends = async () => {
 // ===================== me / settings =====================
 const viewMe = () => {
     const p = state.profile;
+    const isAdmin = state.me.id === MAYFLY_ADMIN_ID;
     app.innerHTML = `<main>
       <div class="mehead">
         <div class="avatar big" id="mav">${isMediaUrl(p.avatar) ? `<img src="${p.avatar}" alt="">` : initial(p.username)}</div>
@@ -736,6 +740,7 @@ const viewMe = () => {
       <div class="err" id="merr"></div>
       <button class="btn" id="msave">Save</button>
       <div class="settingrow"><div><b>Notifications</b><div class="muted tiny" id="pushstatus"></div></div><label class="switch"><input id="pushtoggle" type="checkbox"><span></span></label></div>
+      ${isAdmin ? `<section class="adminpanel"><b>Admin · remove account</b><p class="muted tiny">Search a Mayfly user, then remove their account and server-side data.</p><input class="field" id="adminusersearch" placeholder="Find a user" autocomplete="off"><div id="adminuserresults" class="adminresults"></div></section>` : ''}
       <button class="btn ghost" id="mout">Log out</button>
       <p class="muted tiny">mayfly 🐛 — snaps vanish after they're opened. Full photos are never stored on our server: they stream peer-to-peer when your friend is online, or are end-to-end encrypted when they're not.</p>
     </main>`;
@@ -772,6 +777,35 @@ const viewMe = () => {
         } else await disablePush();
         refreshPushToggle();
     };
+    if (isAdmin) {
+        const search = $('#adminusersearch'), results = $('#adminuserresults');
+        let searchTimer = null;
+        const showUsers = async () => {
+            const q = search.value.trim();
+            if (q.length < 2) { results.innerHTML = `<div class="muted tiny">Type at least two characters.</div>`; return; }
+            results.innerHTML = `<div class="spin">Searching…</div>`;
+            const { data, error } = await db.searchProfiles(q);
+            if (!$('#adminuserresults')) return;
+            if (error) { results.innerHTML = `<div class="err">Could not search users.</div>`; return; }
+            const users = (data || []).filter(u => u.id !== MAYFLY_ADMIN_ID);
+            if (!users.length) { results.innerHTML = `<div class="muted tiny">No matching users.</div>`; return; }
+            results.innerHTML = '';
+            users.forEach((u) => {
+                const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}<div class="who"><b>${esc(u.username)}</b></div><div class="acts"><button class="pill danger removeuser">Remove</button></div></div>`);
+                $('.removeuser', row).onclick = async () => {
+                    if (!confirm(`Remove ${u.username} from Mayfly and delete their server-side data? This cannot be undone.`)) return;
+                    const button = $('.removeuser', row); button.disabled = true; button.textContent = 'Removing…';
+                    const { error: removeError } = await db.adminDeleteUser(u.id);
+                    if (removeError) { button.disabled = false; button.textContent = 'Remove'; return toast('Could not remove that account.'); }
+                    row.remove(); toast(`${u.username} was removed.`);
+                    if (!results.children.length) results.innerHTML = `<div class="muted tiny">No matching users.</div>`;
+                };
+                results.appendChild(row);
+            });
+        };
+        search.oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(showUsers, 220); };
+        results.innerHTML = `<div class="muted tiny">Type at least two characters.</div>`;
+    }
     $('#mout').onclick = async () => { stopStream(); await sb.auth.signOut(); };
 };
 

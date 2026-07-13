@@ -344,6 +344,31 @@ create policy "mf_call_rings_delete" on public.mf_call_rings for delete
   using (auth.uid() = caller_id or auth.uid() = callee_id);
 
 -- ---------------------------------------------------------------------------
+-- Site administration: only the immutable auth ID for ihvnolegs can invoke this
+-- RPC. It removes a Mayfly account, its relay blobs, and then its auth record;
+-- the foreign-key cascades erase the related Mayfly rows (friends, messages,
+-- Stories, groups it created, memberships, push subscriptions, and call rings).
+-- ---------------------------------------------------------------------------
+create or replace function public.mf_admin_delete_user(target_id uuid)
+returns void language plpgsql security definer set search_path = public, auth, storage, pg_temp as $$
+declare
+  admin_id constant uuid := '2f43626a-3056-402d-9daf-b0de5193a2f8';
+begin
+  if auth.uid() <> admin_id then raise exception 'Not authorized'; end if;
+  if target_id is null or target_id = admin_id then raise exception 'The administrator account cannot be removed here'; end if;
+  if not exists (select 1 from public.mf_profiles where id = target_id) then raise exception 'Mayfly user not found'; end if;
+
+  delete from storage.objects
+  where bucket_id = 'mf-snaps'
+    and name in (select id::text from public.mf_snaps where sender_id = target_id or recipient_id = target_id);
+
+  delete from auth.users where id = target_id;
+end;
+$$;
+revoke all on function public.mf_admin_delete_user(uuid) from public;
+grant execute on function public.mf_admin_delete_user(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Storage bucket for encrypted relay blobs (private; content is E2E-encrypted).
 -- ---------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)

@@ -8,6 +8,7 @@ const db = {
     profile:   (username) => sb.from('mf_profiles').select('*').eq('username', username).maybeSingle(),
     profileById: (id) => sb.from('mf_profiles').select(PROF).eq('id', id).maybeSingle(),
     updateProfile: (patch) => sb.from('mf_profiles').update(patch).eq('id', state.me.id),
+    adminDeleteUser: (target_id) => sb.rpc('mf_admin_delete_user', { target_id }),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
     searchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
     allProfiles: () => sb.from('mf_profiles').select(PROF).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),

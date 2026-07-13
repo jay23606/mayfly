@@ -1,6 +1,6 @@
 # mayfly 🐛
 
-Privacy-first disappearing media — a single-page PWA on **GitHub Pages + Supabase**, with **no build step**. Mayfly combines full-quality live peer-to-peer Snaps with bounded, end-to-end encrypted offline photo relays, 24-hour Stories, encrypted chat, voice notes, groups, and video calls.
+Private, chat-first media for the web. Mayfly is a single-page PWA on **GitHub Pages + Supabase**, with **no build step**: peer-to-peer photo/video Snaps, bounded end-to-end encrypted offline photo relays, 24-hour Stories, encrypted chat, voice notes, files, groups, video/voice calls, creative camera filters, and opt-in Web Push for 1:1 messages and calls.
 
 Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses the same engine (Supabase auth/realtime, raw WebRTC over Realtime Broadcast, canvas image processing, IndexedDB). Where instamegle is a *persistent public feed*, mayfly is *directed and ephemeral*.
 
@@ -36,8 +36,10 @@ Runs entirely client-side — the publishable key in `core.js` is public-safe be
 
 - **Stories** — 24-hour posts visible to friends, with replies, viewers, deletion controls, a full-image P2P path, and a capped 20 KB offline fallback. Each account keeps its five newest Stories.
 - **Chat** — end-to-end encrypted text delivery (up to ten undelivered messages per offline recipient, with a seven-day TTL), plus live P2P voice notes and photo/video/file attachments.
-- **Video calls** — 1:1 P2P video/voice (WebRTC), plus group mesh calls.
+- **Video calls** — 1:1 P2P video/voice (WebRTC) with echo-cancellation capture, camera switching, mid-call voice-to-video upgrades, and responsive full-frame mobile video; plus group mesh calls.
 - **Group chats** — persistent membership, member-controlled naming/removal/leaving, live text, Snaps, files, voice clips, and P2P mesh calls.
+- **PWA notifications** — opt-in, privacy-preserving Web Push for background 1:1 messages and incoming calls; notification bodies never include chat plaintext.
+- **Camera tools** — live canvas previews and distinctive photo filters; photos are filtered before capture while video preserves its native recording path.
 
 ## Roadmap
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Snaps Without a Server — mayfly</title>
-<meta name="description" content="A concise architecture note on mayfly: peer-to-peer Snaps, bounded encrypted offline relays, and the tradeoffs versus store-and-forward messaging.">
+<meta name="description" content="A concise architecture note on mayfly: chat-first P2P media, bounded encrypted relays, Web Push, and the tradeoffs versus store-and-forward messaging.">
 <style>
   :root{--bg:#f7f6fb;--card:#fff;--ink:#1d1a27;--soft:#625d70;--line:#e4e0ec;--violet:#6845e6;--teal:#078b80;--amber:#9b611d;--violet-wash:#f0edff;--shadow:0 10px 30px #1a14300d}
   *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 Georgia,serif}
@@ -27,7 +27,7 @@
   <div class="wrap">
     <div class="eyebrow">Architecture note · July 2026</div>
     <h1>Snaps Without<br>a Server</h1>
-    <p>How mayfly moves disappearing media between people without making a service the permanent middleman.</p>
+    <p>How mayfly combines chat-first media, direct browser-to-browser delivery, and a deliberately small encrypted fallback.</p>
     <div class="meta"><span>mayfly vs. a store-and-forward model</span><a href="https://jay23606.github.io/peek/arch.html">Companion: The Zero-Server Stack</a><a href="https://github.com/jay23606/mayfly">Source code</a></div>
   </div>
 </header>
@@ -35,18 +35,18 @@
 <main class="wrap">
   <div class="abstract">
     <div class="label">Short version</div>
-    <p>Most messaging systems upload media to a service, wait for the recipient, and delete it later. mayfly prefers a direct WebRTC transfer: the full Snap travels from one browser to the other. When that is impossible, it uses a small, recipient-encrypted photo relay with strict limits. The gain is less readable media on the server; the cost is weaker offline delivery, network reliability, moderation, and multi-device recovery.</p>
+    <p>Most messaging systems upload media to a service, wait for the recipient, and delete it later. mayfly prefers direct WebRTC delivery: a full Snap travels between browsers. When that is impossible, it uses a small, recipient-encrypted photo relay with strict limits. It layers encrypted text, local chat history, Stories, live group media, Web Push, and calls around that choice. The gain is less readable media on the server; the cost is weaker offline delivery, network reliability, moderation, and multi-device recovery.</p>
   </div>
 
   <nav>
-    <a href="#decision">The design decision</a> · <a href="#routes">Delivery routes</a> · <a href="#bounds">Current limits</a> · <a href="#comparison">Comparison</a> · <a href="#tradeoffs">Tradeoffs</a>
+    <a href="#decision">The design decision</a> · <a href="#routes">Delivery routes</a> · <a href="#experience">Client experience</a> · <a href="#bounds">Current limits</a> · <a href="#comparison">Comparison</a> · <a href="#tradeoffs">Tradeoffs</a>
   </nav>
 
   <section id="decision">
     <h2><span class="num">01</span>The design decision</h2>
     <p class="kicker">Where does the full image wait?</p>
     <p>A conventional disappearing-media service is still a store-and-forward system. The full image is uploaded, retained until delivery or expiry, then removed under the provider&rsquo;s rules. That model is dependable: the recipient can be asleep, offline, or on a difficult network. It also means the provider operates the media path.</p>
-    <p>mayfly keeps the frontend on GitHub Pages and uses Supabase for accounts, metadata, real-time signaling, encrypted relay storage, and row-level access control. The media path is different: when both people are online, the full Snap moves directly between their browsers over WebRTC. The database sees a small preview and the information needed to route the event, not the full live image.</p>
+    <p>mayfly keeps the frontend on GitHub Pages and uses Supabase for accounts, metadata, real-time signaling, encrypted relay storage, Web Push triggers, and row-level access control. The media path is different: when both people are online, the full Snap moves directly between their browsers over WebRTC. The database sees a small preview and the information needed to route the event, not the full live image.</p>
     <div class="flow">
       <div class="node server">Store-and-forward<small>sender → service stores media → recipient</small></div><div class="arrow">↔</div><div class="node peer">mayfly live path<small>sender browser → recipient browser</small></div>
     </div>
@@ -77,8 +77,15 @@
     <p class="caption">The offline path is not a full cloud inbox. It is an intentionally constrained escape hatch for a photo that cannot be delivered live.</p>
   </section>
 
+  <section id="experience">
+    <h2><span class="num">03</span>Client experience, not cloud retention</h2>
+    <p class="kicker">The browser does the creative and conversational work</p>
+    <p>Mayfly is chat-first: a Snap with no timer becomes local media in the recipient&rsquo;s thread; a positive timer preserves the view-once treatment. Photo filters are rendered in a canvas before capture, while video keeps the browser&rsquo;s native recording path. Voice notes, files, group Snaps, and group calls are live peer-to-peer features rather than a durable media vault.</p>
+    <p>For background awareness, an opt-in service worker receives generic Web Push for 1:1 messages and incoming calls. The notification says that something arrived, not what an encrypted chat says. Opening the app restores the normal client-side delivery and decryption flow.</p>
+  </section>
+
   <section id="bounds">
-    <h2><span class="num">03</span>Current bounds are part of the design</h2>
+    <h2><span class="num">04</span>Current bounds are part of the design</h2>
     <p>Mayfly limits the server-side fallback rather than pretending it is a replacement for a media backend.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Feature</th><th>Current behavior</th></tr></thead>
@@ -88,12 +95,13 @@
         <tr><th>Stories</th><td>24-hour posts; five newest per account; an offline preview is capped at 20 KB while the full story remains peer-to-peer.</td></tr>
         <tr><th>Direct text</th><td>End-to-end encrypted in transit and at rest; at most ten undelivered messages per offline recipient, with a seven-day TTL.</td></tr>
         <tr><th>Group media and calls</th><td>Live peer-to-peer mesh. Group text uses member-only Realtime broadcast and is not durable history.</td></tr>
+        <tr><th>Background notification</th><td>Opt-in Web Push for 1:1 messages and incoming calls. Push payloads are generic; chat plaintext stays out of notifications.</td></tr>
       </tbody>
     </table></div>
   </section>
 
   <section id="comparison">
-    <h2><span class="num">04</span>What changes when the server leaves the media path</h2>
+    <h2><span class="num">05</span>What changes when the server leaves the media path</h2>
     <div class="table-wrap"><table>
       <thead><tr><th>Question</th><th>Store-and-forward service</th><th>mayfly</th></tr></thead>
       <tbody>
@@ -107,22 +115,22 @@
   </section>
 
   <section id="tradeoffs">
-    <h2><span class="num">05</span>The honest trade</h2>
+    <h2><span class="num">06</span>The honest trade</h2>
     <div class="trade">
-      <div class="card gain"><h3>What mayfly gains</h3><ul><li>Live full media does not sit in an application media store.</li><li>Relay media is encrypted to the intended recipient.</li><li>Media bandwidth and storage needs stay small for a private, human-scale app.</li><li>The stack is compact: static hosting, managed database services, and browser APIs.</li></ul></div>
+      <div class="card gain"><h3>What mayfly gains</h3><ul><li>Live full media does not sit in an application media store.</li><li>Relay media is encrypted to the intended recipient.</li><li>Creative capture, media history, and presentation stay in the client.</li><li>The stack is compact: static hosting, managed database services, and browser APIs.</li></ul></div>
       <div class="card loss"><h3>What mayfly gives up</h3><ul><li>No guaranteed full-quality offline photo or video delivery.</li><li>No TURN relay yet, so direct peer connections can fail on restrictive or cellular networks.</li><li>No server-side content moderation pipeline or rich cloud features.</li><li>Device-local keys and media make recovery and multi-device use harder.</li></ul></div>
     </div>
     <div class="callout"><div class="label">Important boundary</div><p>Neither architecture can prevent a recipient from taking a screenshot or recording a screen. &ldquo;Ephemeral&rdquo; describes delivery and retention behavior, not control over what a human does after viewing.</p></div>
   </section>
 
   <section>
-    <h2><span class="num">06</span>Conclusion</h2>
-    <p>mayfly is not a replacement for a global social platform. It is a different answer to a narrower problem: private, disappearing sharing among people who are usually online. The core claim is modest: a service does not need to hold every full image in order to provide Snaps, Stories, chat, groups, and calls. For that product shape, direct delivery plus a bounded encrypted fallback is a useful architectural default.</p>
+    <h2><span class="num">07</span>Conclusion</h2>
+    <p>mayfly is not a replacement for a global social platform. It is a different answer to a narrower problem: private, chat-first sharing among people who are usually online. The core claim is modest: a service does not need to hold every full image in order to provide Snaps, Stories, encrypted chat, groups, notifications, and calls. For that product shape, direct delivery plus a bounded encrypted fallback is a useful architectural default.</p>
   </section>
 
   <section class="sources">
     <h3>Notes</h3>
-    <p>This page describes the current <a href="https://github.com/jay23606/mayfly">mayfly source</a>, especially <code>core.js</code>, <code>app.js</code>, <code>rtc.js</code>, <code>crypto.js</code>, and <code>schema.sql</code>. The broader static-app and row-level-security framing comes from <a href="https://jay23606.github.io/peek/arch.html">The Zero-Server Stack</a>. Snapchat is used here as the familiar store-and-forward contrast, not as a full product or policy audit.</p>
+    <p>This page describes the current <a href="https://github.com/jay23606/mayfly">mayfly source</a>, especially <code>app.js</code>, <code>chat.js</code>, <code>rtc.js</code>, <code>crypto.js</code>, <code>push.js</code>, and <code>schema.sql</code>. The broader static-app and row-level-security framing comes from <a href="https://jay23606.github.io/peek/arch.html">The Zero-Server Stack</a>. Snapchat is used here as the familiar store-and-forward contrast, not as a full product or policy audit.</p>
   </section>
   <footer>Prepared as a concise architecture comparison between peer-to-peer ephemeral messaging and server-hosted media delivery.</footer>
 </main>

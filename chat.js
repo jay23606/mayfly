@@ -4,6 +4,7 @@ import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
 import { encryptText, decryptText, decryptWith } from './crypto.js';
 import { browserNotificationsEnabled } from './push.js';
+import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from './callapps.js';
 
 // ===================== unified conversations (snaps + chat, Snapchat-style) =====================
 // TEXT is async + end-to-end encrypted via mf_messages (works even when the friend is
@@ -692,9 +693,10 @@ const wireMic = (box, uid) => {
 const wire = (uid, conn) => {
     conns.set(uid, conn);
     const rx = {}; let binRx = null;
-    conn.on('open', () => { try { conn.send({ t: 'cap' }); } catch (e) {} });
+    conn.on('open', () => { try { conn.send({ t: 'cap' }); } catch (e) {} if (uid === callPeerId) flushCallApps(uid); });
     conn.on('data', (d) => {
         if (!d) return;
+        if (d.t === 'call-app') { if (uid === callPeerId) receiveCallApp(d.payload); return; }
         if (d.t === 'typing') { const el2 = $('#ctyping'); if (el2 && openUid === uid) el2.textContent = 'typing…'; return; }
         if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
         if (d.t === 'file-meta') { binRx = { meta: d, chunks: [] }; return; }
@@ -718,7 +720,20 @@ const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia
     // the mic and sent back as an echo, especially on mobile voice calls.
     audio: callAudio,
 });
-let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null, curRingId = null;
+let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null, curRingId = null, callPeerId = null, callAmCaller = false;
+const callAppOutbox = [];
+const flushCallApps = (uid) => {
+    const conn = conns.get(uid);
+    if (!conn?.open) return;
+    while (callAppOutbox.length) { try { conn.send({ t: 'call-app', payload: callAppOutbox.shift() }); } catch (e) { break; } }
+};
+const sendCallApp = (payload) => {
+    if (!callPeerId) return;
+    const conn = conns.get(callPeerId);
+    if (conn?.open) { try { conn.send({ t: 'call-app', payload }); return; } catch (e) {} }
+    callAppOutbox.push(payload);
+    ensureConn(callPeerId);
+};
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
 // swap a control button's glyph + dim (red) it when the track is off
 const setCtl = (btn, on, onName, offName) => { if (!btn) return; btn.innerHTML = icon(on ? onName : offName); btn.classList.toggle('off', !on); };
@@ -746,6 +761,7 @@ const openCallStage = (video) => {
     setCtl($('#ccam'), video, 'video', 'videoOff');
     localIsMain = false;
     renderCallViews();
+    mountCallApps($('#callapps'), { send: sendCallApp, amCaller: callAmCaller });
 };
 const playVideo = (node) => node?.play().catch(() => {});
 const renderCallViews = () => {
@@ -771,6 +787,7 @@ const endCall = () => {
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     const rv = $('#rv'), lv = $('#lv'); if (rv) rv.srcObject = null; if (lv) lv.srcObject = null;
     remoteStream = null; localIsMain = false; cameraFacing = 'user';
+    unmountCallApps(); callPeerId = null; callAppOutbox.length = 0;
     setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera');
     $('#callo').classList.remove('on', 'voice');
 };
@@ -807,6 +824,7 @@ export const callUser = async (uid, username, video = true) => {
     if (curCall) return toast('Already in a call.');
     cameraFacing = 'user';
     try { localStream = await getMedia(video, cameraFacing); } catch (e) { return toast('Camera/mic blocked'); }
+    callPeerId = uid; callAmCaller = true; ensureConn(uid);
     callPeerName = username;
     openCallStage(video); $('#callo').classList.add('on'); setStat((video ? 'Calling ' : 'Ringing ') + username + '…');
     // transient ring row → push webhook wakes their backgrounded app (deleted in endCall)
@@ -832,6 +850,7 @@ export const onIncomingCall = (incoming) => {
         cameraFacing = 'user';
         try { localStream = await getMedia(video, cameraFacing); }
         catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
+        callPeerId = incoming.peer; callAmCaller = false;
         openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…');
         wireCallMedia(incoming);
         try { await incoming.answer(localStream); }
@@ -879,6 +898,7 @@ $('#cflip').onclick = async () => {
         cameraFacing = nextFacing; renderCallViews();
     } catch (e) { newTrack.stop(); toast('Could not switch cameras.'); }
 };
+$('#capps').onclick = toggleCallApps;
 $('#lv').onclick = swapCallViews;
 $('#lv').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); swapCallViews(); } };
 setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera'); if ($('#chang')) $('#chang').innerHTML = icon('phoneOff');

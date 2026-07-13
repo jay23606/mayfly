@@ -627,9 +627,12 @@ export const detachAll = () => { openUid = null; threadBox = null; };
 export const bootChat = async () => { await refreshInbox(); await syncMessages(); };
 
 // ===================== 1:1 calling (video or voice) =====================
+const callAudio = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true }, channelCount: 1 };
 const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia({
     video: video ? { facingMode: { ideal: facing } } : false,
-    audio: true,
+    // Without these constraints a speakerphone's remote audio can be picked up by
+    // the mic and sent back as an echo, especially on mobile voice calls.
+    audio: callAudio,
 });
 let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null, curRingId = null;
 const setStat = (t) => { const s = $('#cstat'); if (s) s.textContent = t; };
@@ -654,8 +657,9 @@ const openCallStage = (video) => {
     try { screen.orientation?.unlock?.(); } catch (e) {}
     try { screen.unlockOrientation?.(); } catch (e) {}
     $('#callo').classList.toggle('voice', !video);
-    $('#ccam').style.display = video ? '' : 'none';   // no camera toggle on a voice call
+    $('#ccam').style.display = '';
     $('#cflip').style.display = video ? '' : 'none';
+    setCtl($('#ccam'), video, 'video', 'videoOff');
     localIsMain = false;
     renderCallViews();
 };
@@ -695,6 +699,9 @@ const wireCallMedia = (c) => {
     c.on('stream', (s) => {
         const remote = $('#rv'); if (!remote || !s) return;
         remoteStream = s;
+        // A peer may upgrade an audio call to video later. Reveal the stage as
+        // soon as its new track arrives, even if this device stays audio-only.
+        if (s.getVideoTracks().length) $('#callo').classList.remove('voice');
         // `autoplay` is present in the markup, but explicitly playing here covers
         // browsers that do not restart a video after its srcObject changes.
         renderCallViews();
@@ -749,7 +756,30 @@ export const onIncomingCall = (incoming) => {
 };
 $('#chang').onclick = endCall;
 $('#cmute').onclick = () => { const a = localStream?.getAudioTracks()[0]; if (a) { a.enabled = !a.enabled; setCtl($('#cmute'), a.enabled, 'mic', 'micOff'); } };
-$('#ccam').onclick = () => { const v = localStream?.getVideoTracks()[0]; if (v) { v.enabled = !v.enabled; setCtl($('#ccam'), v.enabled, 'video', 'videoOff'); } };
+$('#ccam').onclick = async () => {
+    let v = localStream?.getVideoTracks()[0];
+    if (v) {
+        v.enabled = !v.enabled;
+        setCtl($('#ccam'), v.enabled, 'video', 'videoOff');
+        return;
+    }
+    if (!curCall?.addVideoTrack || !localStream) return toast('Camera is unavailable for this call.');
+    let camera;
+    try { camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing } }, audio: false }); }
+    catch (e) { return toast('Camera blocked or unavailable.'); }
+    v = camera.getVideoTracks()[0];
+    try {
+        localStream.addTrack(v);
+        if (!await curCall.addVideoTrack(v, localStream)) throw new Error('Could not add camera');
+        $('#callo').classList.remove('voice');
+        $('#cflip').style.display = '';
+        setCtl($('#ccam'), true, 'video', 'videoOff');
+        renderCallViews();
+    } catch (e) {
+        localStream.removeTrack(v); v.stop();
+        toast('Could not turn on video during this call.');
+    }
+};
 $('#cflip').onclick = async () => {
     const oldTrack = localStream?.getVideoTracks()[0];
     if (!oldTrack || !curCall?.replaceVideoTrack) return;

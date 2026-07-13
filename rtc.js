@@ -74,7 +74,7 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
 // Media (video/voice call) connection — same PeerJS-shaped surface as instamegle.
 const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
     const ev = emitter(); const pc = new RTCPeerConnection(ICE);
-    let remoteSet = false, closed = false, remoteStream = null;
+    let remoteSet = false, closed = false, remoteStream = null, established = false;
     let lastState = { connection: pc.connectionState, ice: pc.iceConnectionState }; const pend = [];
     const fireClose = () => { if (closed) return; closed = true; conns.delete(cid); ev.emit('close'); };
     const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
@@ -88,13 +88,24 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
             if (e === 'state') queueMicrotask(() => fn(lastState));
             return api;
         },
-        answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
+        answer: async (s) => { addTracks(s); await pc.setLocalDescription(await pc.createAnswer()); established = true; signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription }); },
         // Replaces the sender's camera track without renegotiating or interrupting
         // the audio stream (used by the mobile front/rear camera switch).
         replaceVideoTrack: async (track) => {
             const sender = pc.getSenders().find(s => s.track?.kind === 'video');
             if (!sender || !track) return false;
             await sender.replaceTrack(track);
+            return true;
+        },
+        // An audio-only call has no video sender to replace. Add one and perform a
+        // normal WebRTC renegotiation so either person can turn a camera on later.
+        addVideoTrack: async (track, source) => {
+            if (!track || !established || pc.signalingState !== 'stable') return false;
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) { await sender.replaceTrack(track); return true; }
+            pc.addTrack(track, source);
+            await pc.setLocalDescription(await pc.createOffer());
+            signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription });
             return true;
         },
         close() { try { pc.close(); } catch (e) {} conns.delete(cid); },
@@ -127,7 +138,14 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
           .then(() => signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription, metadata }));
     }
     conns.set(cid, { handleSignal: async (msg) => {
-        if (msg.sdp) { await pc.setRemoteDescription(msg.sdp); remoteSet = true; pend.splice(0).forEach(c => pc.addIceCandidate(c).catch(() => {})); }
+        if (msg.sdp) {
+            await pc.setRemoteDescription(msg.sdp); remoteSet = true;
+            pend.splice(0).forEach(c => pc.addIceCandidate(c).catch(() => {}));
+            if (msg.sdp.type === 'offer' && established) {
+                await pc.setLocalDescription(await pc.createAnswer());
+                signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription });
+            } else if (msg.sdp.type === 'answer') established = true;
+        }
         else if (msg.ice) { remoteSet ? pc.addIceCandidate(msg.ice).catch(() => {}) : pend.push(msg.ice); }
     } });
     return api;

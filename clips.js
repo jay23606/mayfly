@@ -11,7 +11,6 @@ const otherOf = (row) => row.requester_id === state.me.id ? row.addressee : row.
 const enterClipFullscreen = async (clip) => {
     const stage = document.querySelector('#clipstage');
     try { if (stage && !document.fullscreenElement) await stage.requestFullscreen(); } catch (e) {}
-    try { await screen.orientation?.lock?.((clip.aspectRatio || 1) < 1 ? 'portrait' : 'landscape'); } catch (e) {}
 };
 const leaveClipFullscreen = async () => {
     try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (e) {}

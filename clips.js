@@ -14,6 +14,10 @@ const enterClipFullscreen = async (clip) => {
     try { if (stage && !document.fullscreenElement) await stage.requestFullscreen(); } catch (e) {}
     try { await screen.orientation?.lock?.((clip.aspectRatio || 1) < 1 ? 'portrait' : 'landscape'); } catch (e) {}
 };
+const leaveClipFullscreen = async () => {
+    try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (e) {}
+    try { screen.orientation?.unlock?.(); } catch (e) {}
+};
 
 const shareClip = async () => {
     const clip = feed[index]; if (!clip) return;
@@ -56,10 +60,11 @@ const renderClip = () => {
     stage.innerHTML = '';
     const frame = el(`<iframe class="clipplayer" title="${esc(clip.name)}" src="${playerUrl(clip)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
     const meta = el(`<div class="clipmeta"><b>${esc(clip.name)}</b><span>${esc(clip.account?.displayName || clip.channel?.displayName || 'PeerTube')}</span><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
-    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio">${soundOn ? 'Sound off' : 'Sound on'}</button><button class="clipcontrol clipsharebtn">Share</button></div>`);
+    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">${soundOn ? '↙︎ 🔇' : '↗︎ 🔊'}</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">↗</button></div>`);
     controls.querySelector('.clipaudio').onclick = async () => {
         soundOn = !soundOn;
         if (soundOn) await enterClipFullscreen(clip);
+        else await leaveClipFullscreen();
         renderClip();
     };
     controls.querySelector('.clipsharebtn').onclick = shareClip;

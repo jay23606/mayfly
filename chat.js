@@ -27,6 +27,10 @@ let setReplyDraft = () => {};
 // one ingestion job per row so that overlap cannot add the same message twice.
 const messageJobs = new Map();
 const handledMessageIds = new Set();
+// Reactions are delivered as small encrypted control messages. In the unusual case
+// that a reaction reaches this device before the message it refers to, keep it long
+// enough to apply when that message is ingested.
+const pendingReactions = new Map();
 // Legacy photo snaps use plain "live" / "relay". Video snaps retain their MIME type
 // in the existing delivery value, avoiding a database migration.
 const snapMime = (s) => {
@@ -127,12 +131,46 @@ const gifFromPayload = (text, me = false, at = Date.now()) => {
 const replyFromPayload = (text, me = false, at = Date.now()) => {
     try { const p = JSON.parse(text); return p?.t === 'chat-reply' && typeof p.text === 'string' && typeof p.reply === 'string' ? { me, kind: 'text', text: p.text.slice(0, MSG_MAX), replyTo: p.reply.slice(0, 240), at } : null; } catch (e) { return null; }
 };
+const reactionFromPayload = (text) => {
+    try {
+        const p = JSON.parse(text);
+        return p?.t === 'chat-reaction' && typeof p.targetId === 'string' && p.targetId.length <= 160 && ['👍', '♥'].includes(p.reaction)
+            ? { targetId: p.targetId, reaction: p.reaction }
+            : null;
+    } catch (e) { return null; }
+};
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
+const applyIncomingReaction = async (uid, targetId, reaction) => {
+    const applied = await histUpdate(uid, (history) => {
+        const entry = history.find(item => item.msgId === targetId);
+        if (!entry) return false;
+        entry.reaction = reaction;
+        return true;
+    }).catch(() => false);
+    if (!applied) {
+        pendingReactions.set(targetId, reaction);
+        // Do not let an orphaned reaction remain in memory indefinitely.
+        setTimeout(() => pendingReactions.delete(targetId), 2 * 60 * 1000);
+    }
+    return applied;
+};
 const ingestMessage = async (row) => {
     let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
     catch (e) { return false; }
     const at = new Date(row.created_at).getTime();
+    const incomingReaction = reactionFromPayload(text);
+    if (incomingReaction) {
+        await applyIncomingReaction(row.sender_id, incomingReaction.targetId, incomingReaction.reaction);
+        await db.delMessage(row.id);
+        if (openUid === row.sender_id) renderThreadBody(row.sender_id, true);
+        return true;
+    }
     const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || gifFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+    // Both people need the same stable identifier to attach a reaction to a shared
+    // item. The delivery row ID is available to the recipient before it is deleted.
+    entry.msgId = row.id;
+    const queuedReaction = pendingReactions.get(entry.msgId);
+    if (queuedReaction) { entry.reaction = queuedReaction; pendingReactions.delete(entry.msgId); }
     await histPush(row.sender_id, entry);
     await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
     if (openUid === row.sender_id) appendEntry(entry);
@@ -428,7 +466,15 @@ const messageCard = (uid, e, content) => {
         const action = event.target.closest?.('[data-action]')?.dataset.action; if (!action) return;
         event.stopPropagation(); menu.hidden = true;
         if (action === 'reply') { setReplyDraft(e); return; }
-        if (action === 'react' || action === 'love') await updateLocalEntry(uid, e.localId, entry => { entry.reaction = action === 'react' ? '👍' : '♥'; });
+        if (action === 'react' || action === 'love') {
+            const reaction = action === 'react' ? '👍' : '♥';
+            await updateLocalEntry(uid, e.localId, entry => { entry.reaction = reaction; });
+            // Older local history from before stable message IDs cannot be matched on
+            // the other device. New messages, including GIFs and Clip shares, carry
+            // their delivery ID and therefore update both participants.
+            if (e.msgId) await sendReaction(uid, e.msgId, reaction);
+            return;
+        }
         if (action === 'save') await updateLocalEntry(uid, e.localId, entry => { entry.saved = !entry.saved; });
         if (action === 'delete') await updateLocalEntry(uid, e.localId, (entry, history) => { history.splice(history.indexOf(entry), 1); });
     };
@@ -449,7 +495,9 @@ const gifBubble = (e) => el(`<div class="b ${e.me ? 'me' : 'them'} gifbubble ${e
 const appendEntry = () => { if (openUid) renderThreadBody(openUid); };
 
 // ---- send an async encrypted text ----
-export const sendText = async (uid, username, text, localEntry = null) => {
+export const sendText = async (uid, username, text, localEntry = null, options = {}) => {
+    const keepLocalHistory = options.keepLocalHistory !== false;
+    const countTowardStreak = options.countTowardStreak !== false;
     text = text.slice(0, MSG_MAX);   // hard size cap (backstop to the input maxlength)
     // Cap how many undelivered messages can queue up for a friend who's offline.
     if (!isOnline(uid)) {
@@ -462,17 +510,29 @@ export const sendText = async (uid, username, text, localEntry = null) => {
     }
     const msgId = localEntry?.msgId || entryId();   // so the row's realtime DELETE = "delivered" receipt
     const entry = localEntry || { me: true, kind: 'text', text, at: Date.now(), msgId, status: 'sent', localId: entryId() };
-    await histPush(uid, entry);
-    if (openUid === uid) appendEntry(entry);
-    if (convBox) renderConvs(convBox, uid);
+    // Special entries (GIFs, Clips, Story replies) also need this ID so either person
+    // can react to the same item after it arrives.
+    entry.msgId ||= msgId;
+    if (keepLocalHistory) {
+        await histPush(uid, entry);
+        if (openUid === uid) appendEntry(entry);
+        if (convBox) renderConvs(convBox, uid);
+    }
     const pub = await pubOf(uid);
     if (!pub) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
     const enc = await encryptText(pub, text);
     const { error } = await db.sendMessage({ id: msgId, sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
-    db.bumpStreak(uid).then(() => {}, () => {});
+    if (countTowardStreak) db.bumpStreak(uid).then(() => {}, () => {});
     return true;
 };
+const sendReaction = (uid, targetId, reaction) => sendText(
+    uid,
+    'your friend',
+    JSON.stringify({ t: 'chat-reaction', targetId, reaction }),
+    null,
+    { keepLocalHistory: false, countTowardStreak: false },
+);
 export const sendStoryReply = async (uid, username, text, story) => {
     const storyW = Number(story.w) || 0, storyH = Number(story.h) || 0;
     const payload = JSON.stringify({ t: 'story-reply', storyId: story.id, text, w: storyW, h: storyH });

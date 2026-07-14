@@ -1,47 +1,67 @@
-# mayfly 🐛
+# mayfly
 
-Private, chat-first media for the web. Mayfly is a single-page PWA on **GitHub Pages + Supabase**, with **no build step**: peer-to-peer photo/video Snaps, bounded end-to-end encrypted offline photo relays, 24-hour Stories, encrypted chat, voice notes, files, groups, video/voice calls, creative camera filters, and opt-in Web Push for 1:1 messages and calls.
+Browser-first private media for the web. Mayfly is a chat-first PWA with peer-to-peer photo/video Snaps and calls, recipient-encrypted offline photo relays, encrypted 1:1 chat, Stories, groups, Clips, Memories, and browser push notifications.
 
-Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses the same engine (Supabase auth/realtime, raw WebRTC over Realtime Broadcast, canvas image processing, IndexedDB). Where instamegle is a *persistent public feed*, mayfly is *directed and ephemeral*.
+It is intentionally **not serverless**: the static frontend uses Supabase for authentication, database policy, Realtime signaling, private relay storage, and Edge Functions. The distinguishing choice is that when two people are online, the full Snap and call media travel directly between their browsers over WebRTC instead of waiting in an application media store.
 
-Read the implementation note: [**Mayfly: browser-first private media**](https://jay23606.github.io/mayfly/paper.html).
+[Open Mayfly](https://jay23606.github.io/mayfly/) · [Read the implementation note](https://jay23606.github.io/mayfly/paper.html)
 
-## How a snap travels
+## Highlights
 
-| Recipient is… | Delivery | Where the full image lives |
-|---|---|---|
-| **online** | live peer-to-peer (WebRTC) | full-quality photo or video streams directly from the sender's browser |
-| **offline** | encrypted photo relay | a re-encoded ≤50 KB WebP/JPEG ciphertext in a private Storage bucket; video remains live-only |
+- **Live peer-to-peer media** — full photo/video Snaps, voice notes, files, 1:1 calls, group calls, and group media use browser-to-browser WebRTC paths when peers are online.
+- **Bounded encrypted fallback** — an offline photo is re-encoded to at most 50 KB, encrypted to the recipient's device key with ECDH P-256 + AES-GCM, and placed in private Storage. Video remains live-only.
+- **Chat that stays client-first** — 1:1 text is encrypted before it reaches the database; delivered messages become device-local conversation history. Timed Snaps remain view-once, while untimed Snaps stay in local chat.
+- **Social layer** — 24-hour Stories, replies, viewers, streaks, public profiles, friend privacy controls, and administrator-enforced privacy locks.
+- **Clips, GIFs, and stickers** — a YouTube-backed Clips feed with local likes/saves/follows/interests and embedded chat shares; GIPHY-powered GIFs and stickers in chat.
+- **Local Memories** — captured media can be saved, deleted, reused in a chat, or posted to a Story from IndexedDB on the current browser. They are not synced to the server.
+- **Shared call activities** — Chess, Geometry Dash, Pac-Man, Pool, Air Hockey, Scrabble, Trivia, Icebreakers, Stack, and Tetris run during 1:1 calls.
 
-- **End-to-end encryption** (`crypto.js`): every relayed snap is encrypted to the recipient's ECDH P-256 public key (ECIES → AES-GCM). The private key is generated on-device and never leaves it, so the server only ever holds random bytes.
-- **The server never holds a viewable full Snap.** Postgres holds only small previews and metadata; relay media is encrypted to the recipient's device key before it reaches Storage.
-- **Bounded offline delivery:** one pending relay per friend, at most **100** outstanding relay Snaps per sender, each capped at 50 KB and cleaned after seven days. Video Snaps require the recipient to be online.
-- **Chat-first Snaps:** Snaps stay in the recipient's local chat history by default. Choosing a 3/5/10-second timer makes one view full-screen, then removes the delivery.
-- **Receipts:** a sent Snap progresses through **Sent → Delivered → Opened**, or **Expired** after its delivery window.
-- **Streaks** 🔥 count consecutive days you and a friend snap each other.
+## How a Snap travels
 
-## Files
+| Recipient | Delivery | Where the full media lives |
+| --- | --- | --- |
+| **Online** | live WebRTC | directly between the sender's and recipient's browsers |
+| **Offline** | encrypted photo relay | ciphertext in a private Storage bucket; the recipient decrypts it locally |
 
-`index.html` shell · `styles.css` · ES modules: `util.js` (pure helpers) · `core.js` (config/Supabase/IndexedDB/image) · `crypto.js` (E2E) · `rtc.js` (WebRTC live delivery) · `db.js` (queries) · `app.js` (camera/compose/inbox/player/friends/boot) · `sw.js` (PWA cache) · `schema.sql` (Supabase tables + RLS).
+- The offline fallback allows one unopened relay per recipient and 100 total outstanding relays per sender. Unopened relays expire after seven days.
+- Live Snaps use the normal 24-hour delivery window. Video, voice notes, files, and live group media do not have an offline relay.
+- The backend still handles routing and lifecycle metadata, a tiny Snap preview, and any supplied caption. It does not receive the full live Snap or call-media payload.
+- A recipient can still screenshot, record, or re-share what they receive. Ephemeral delivery is not DRM.
 
-## Setup
+## Architecture at a glance
 
-1. **Database:** open the Supabase project → SQL Editor → paste [`schema.sql`](schema.sql) → Run. It creates the `mf_`-prefixed tables, RLS policies, the streak function, and the private `mf-snaps` Storage bucket.
-2. **Auth:** add the Pages URL to Auth → URL Configuration (Site URL + redirect allow-list). Autoconfirm signups (or wire up email) as you prefer.
-3. **Deploy:** push to GitHub, enable Pages from `main` / root.
+| Layer | Responsibility |
+| --- | --- |
+| Static PWA | UI, camera processing, WebRTC, local storage, client-side crypto, and service worker |
+| Supabase | Auth, Postgres + RLS, Realtime signaling, private relay storage, and Edge Functions |
+| WebRTC | live Snaps, direct calls, files, voice notes, group-media legs, and in-call activity state |
+| IndexedDB / localStorage | device key material, local threads, Memories, and Clips preferences |
 
-Runs entirely client-side — the publishable key in `core.js` is public-safe because every table is protected by Row Level Security.
+Group membership is persistent and policy-protected. Open group text uses member-authorized Realtime Broadcast and is intentionally non-durable; it should not be described as end-to-end encrypted group text.
 
-## Also built
+## Repository map
 
-- **Stories** — 24-hour posts visible to friends, with replies, viewers, deletion controls, a full-image P2P path, and a capped 20 KB offline fallback. Each account keeps its five newest Stories.
-- **Chat** — end-to-end encrypted text delivery (up to ten undelivered messages per offline recipient, with a seven-day TTL), plus live P2P voice notes and photo/video/file attachments.
-- **Video calls** — 1:1 P2P video/voice (WebRTC) with echo-cancellation capture, camera switching, mid-call voice-to-video upgrades, and responsive full-frame mobile video; plus group mesh calls.
-- **Group chats** — persistent membership, member-controlled naming/removal/leaving, live text, Snaps, files, voice clips, and P2P mesh calls.
-- **PWA notifications** — opt-in, privacy-preserving Web Push for background 1:1 messages and incoming calls; notification bodies never include chat plaintext.
-- **Camera tools** — live canvas previews and distinctive photo filters; photos are filtered before capture while video preserves its native recording path.
+- `app.js` — boot, camera, Snaps, Stories, people, profiles, and local cleanup
+- `chat.js` / `groups.js` — 1:1 conversations, group conversations, calls, live media, and receipts
+- `core.js` / `crypto.js` / `rtc.js` — Supabase client, media processing, recipient encryption, and WebRTC
+- `clips.js` / `memories.js` / `callapps.js` — Clips, browser-only Memories, and in-call activities
+- `schema.sql` — data model, RLS, private Storage policy, and Realtime authorization
+- `supabase/functions/` — YouTube Clips, GIPHY, push, and admin functions
+- `paper.html` — implementation note with data paths, privacy boundaries, and current limitations
 
-## Roadmap
+## Deploy your own copy
 
-- **Scheduled cleanup** — an Edge Function cron to sweep expired relay blobs/rows + stories server-side (today it's lazy client-side cleanup).
-- **TURN** — relay creds so live P2P works on cellular / symmetric NAT.
+1. Create a Supabase project you control, run [`schema.sql`](schema.sql), and configure Auth redirect URLs for your HTTPS domain.
+2. Replace the deployment-specific Supabase URL and publishable key in [`core.js`](core.js). The publishable key is safe to expose to the browser only because RLS and Storage policies enforce access; never put a service-role key in frontend code.
+3. Configure and deploy the needed Edge Functions. Keep YouTube, GIPHY, VAPID, and service-role credentials in Supabase secrets, not in the repository.
+4. Deploy the static files to an HTTPS host such as GitHub Pages, then test sign-in, calls, relay delivery, and your final CORS/Auth configuration from that domain.
+
+For a commercially packaged version with buyer-owned configuration and deployment checklists, see the private `mayfly-white-label` repository.
+
+## Production limits to plan for
+
+- `rtc.js` has no TURN server configured. Some cellular, corporate, or symmetric-NAT networks will fail to connect peers until TURN is added.
+- Expired Snap relay cleanup is currently triggered by app clients; production deployments should add scheduled server-side cleanup.
+- Device-local encryption keys and Memories do not provide automatic multi-device recovery or backup.
+- YouTube, GIPHY, and dynamically loaded call-activity modules are external dependencies with their own availability and terms.
+- Browser crypto and RLS are building blocks, not a substitute for abuse workflows, rate limits, audit practices, retention policies, and independent security review.

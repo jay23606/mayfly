@@ -4,7 +4,7 @@ Private, chat-first media for the web. Mayfly is a single-page PWA on **GitHub P
 
 Sibling to [instamegle](https://github.com/jay23606/instamegle) — it reuses the same engine (Supabase auth/realtime, raw WebRTC over Realtime Broadcast, canvas image processing, IndexedDB). Where instamegle is a *persistent public feed*, mayfly is *directed and ephemeral*.
 
-Read the architecture comparison: [**Snaps Without a Server — mayfly vs. Snapchat**](https://jay23606.github.io/mayfly/paper.html).
+Read the implementation note: [**Mayfly: browser-first private media**](https://jay23606.github.io/mayfly/paper.html).
 
 ## How a snap travels
 

@@ -3,136 +3,184 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Snaps Without a Server — mayfly</title>
-<meta name="description" content="A concise architecture note on mayfly: chat-first P2P media, bounded encrypted relays, Web Push, and the tradeoffs versus store-and-forward messaging.">
+<meta name="description" content="An implementation note on Mayfly: browser-first private media, WebRTC delivery, encrypted offline photo relays, and the limits of the design.">
+<title>Mayfly: browser-first private media</title>
 <style>
-  :root{--bg:#f7f6fb;--card:#fff;--ink:#1d1a27;--soft:#625d70;--line:#e4e0ec;--violet:#6845e6;--teal:#078b80;--amber:#9b611d;--violet-wash:#f0edff;--shadow:0 10px 30px #1a14300d}
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 Georgia,serif}
-  .wrap{width:min(920px,calc(100% - 32px));margin:auto}.hero{padding:72px 0 48px;background:linear-gradient(135deg,#261b55,#6745e3 54%,#21a99d);color:#fff}
-  .eyebrow,.label,.kicker{font:700 12px/1.2 system-ui,sans-serif;letter-spacing:.11em;text-transform:uppercase}.eyebrow{opacity:.76}.hero h1{font-size:clamp(42px,8vw,76px);line-height:.98;letter-spacing:-.055em;margin:16px 0}.hero p{max-width:700px;margin:0;font-size:20px;line-height:1.5;color:#f2efff}
-  .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:28px;font:13px/1.4 system-ui,sans-serif;color:#e4ddff}.meta a{color:#fff}
-  main{padding:36px 0 72px}.abstract,.card,.callout{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px 26px;box-shadow:var(--shadow)}.abstract{border-left:4px solid var(--violet)}
-  .abstract p{margin:8px 0 0;font-size:19px;line-height:1.58}nav{margin:28px 0;padding:16px 22px;border-left:2px solid var(--line);font:14px/1.8 system-ui,sans-serif}nav a{color:var(--violet);text-decoration:none}
-  section{margin:54px 0}h2{font-size:30px;line-height:1.15;letter-spacing:-.025em;margin:0 0 14px}h2 .num{color:var(--violet);font:700 13px/1 system-ui,sans-serif;letter-spacing:.08em;margin-right:10px}h3{font:700 17px/1.3 system-ui,sans-serif;margin:24px 0 8px}.kicker{color:var(--soft);margin:-4px 0 14px}p{margin:12px 0}a{color:#5134bc}strong{font-weight:700}
-  .flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin:18px 0}.node{padding:16px;border-radius:12px;text-align:center;background:var(--card);border:1px solid var(--line);font:700 15px/1.25 system-ui,sans-serif;box-shadow:var(--shadow)}.node small{display:block;margin-top:5px;color:var(--soft);font-weight:400}.node.server{border-color:#e6bb85;background:#fff9f0}.node.peer{border-color:#a99bea;background:#f7f5ff}.arrow{font:28px/1 system-ui;color:var(--violet)}
-  .caption{margin:-4px 0 20px;color:var(--soft);font:14px/1.45 system-ui,sans-serif}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}table{width:100%;border-collapse:collapse;font:14px/1.45 system-ui,sans-serif}th,td{padding:13px 15px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}thead{background:#f0edff}th{font-weight:750}tr:last-child>*{border-bottom:0}.yes{color:var(--teal);font-weight:700}.partial{color:var(--amber);font-weight:700}
-  .routes{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.route{padding:18px;border-radius:14px;background:var(--card);border:1px solid var(--line)}.route h3{margin:0 0 8px}.route ul,.trade ul{margin:8px 0 0;padding-left:20px}.route li,.trade li{margin:7px 0}.route.live{border-top:3px solid var(--teal)}.route.offline{border-top:3px solid var(--violet)}
-  .callout{border-left:4px solid var(--amber);background:#fffaf3}.callout p{margin-bottom:0}.trade{display:grid;grid-template-columns:1fr 1fr;gap:16px}.trade .card h3{margin-top:0}.trade .gain{border-top:3px solid var(--teal)}.trade .loss{border-top:3px solid var(--amber)}
-  code{font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:#efedf4;padding:2px 4px;border-radius:4px}.sources{font:14px/1.55 system-ui,sans-serif;color:var(--soft)}footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font:13px/1.5 system-ui,sans-serif;color:var(--soft)}
-  @media(max-width:650px){.hero{padding:52px 0 38px}.hero p{font-size:18px}.abstract,.card,.callout{padding:20px}.routes,.trade{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg);margin:auto}section{margin:42px 0}}
+  :root{--bg:#09090e;--panel:#11111b;--panel2:#171724;--ink:#f4f2fb;--muted:#b7b4c7;--line:#2a2938;--violet:#a996ff;--cyan:#77e8db;--orange:#ffbd79;--rose:#ff9db3;--shadow:0 18px 50px #0007}
+  *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(900px 500px at 90% -4%,#3b247433,transparent 70%),var(--bg);color:var(--ink);font:17px/1.65 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{width:min(1040px,calc(100% - 36px));margin:auto}.hero{padding:78px 0 56px;border-bottom:1px solid var(--line);background:linear-gradient(120deg,#171129 0%,#0d1320 56%,#082725 100%)}.eyebrow,.label,.num{font:750 12px/1.2 ui-sans-serif,system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase}.eyebrow{color:var(--cyan)}h1{max-width:900px;margin:16px 0;font-size:clamp(44px,8vw,86px);line-height:.94;letter-spacing:-.065em}.hero p{max-width:730px;margin:0;color:#d6d2e5;font-size:20px;line-height:1.55}.meta{display:flex;flex-wrap:wrap;gap:9px 20px;margin-top:28px;color:var(--muted);font:14px/1.5 ui-sans-serif,system-ui,sans-serif}.meta a{color:var(--ink)}main{padding:36px 0 84px}a{color:var(--cyan);text-underline-offset:3px}p{margin:10px 0 14px}section{margin:66px 0}h2{margin:0 0 16px;font-size:clamp(28px,4vw,42px);line-height:1.08;letter-spacing:-.04em}.num{display:block;margin-bottom:11px;color:var(--violet)}h3{margin:0 0 9px;font-size:18px;line-height:1.35}.lede{color:var(--muted);font-size:19px;max-width:790px}.callout{display:grid;grid-template-columns:auto 1fr;gap:16px;margin:30px 0;padding:21px 23px;border:1px solid #5b4da5;background:#17132a;border-radius:16px;box-shadow:var(--shadow)}.callout .label{color:var(--violet);padding-top:4px}.callout p{margin:0}.nav{display:flex;flex-wrap:wrap;gap:7px 9px;margin:28px 0 10px}.nav a{border:1px solid var(--line);border-radius:999px;padding:7px 12px;color:var(--muted);text-decoration:none;font:13px/1.2 ui-sans-serif,system-ui,sans-serif}.nav a:hover{border-color:var(--violet);color:var(--ink)}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.card{padding:22px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,var(--panel2),var(--panel));box-shadow:var(--shadow)}.card p:last-child,.card ul:last-child{margin-bottom:0}.card.accent-cyan{border-top:3px solid var(--cyan)}.card.accent-violet{border-top:3px solid var(--violet)}.card.accent-orange{border-top:3px solid var(--orange)}.card.accent-rose{border-top:3px solid var(--rose)}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:10px;margin:24px 0}.node{display:flex;flex-direction:column;justify-content:center;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel);font-weight:720;text-align:center;line-height:1.25}.node small{display:block;margin-top:7px;color:var(--muted);font-size:13px;font-weight:400}.node.browser{border-color:#5d51a0}.node.service{border-color:#7b6348}.arrow{align-self:center;color:var(--cyan);font-size:23px}.route{position:relative;padding:25px 24px 21px;border:1px solid var(--line);border-radius:18px;background:var(--panel);overflow:hidden}.route:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--violet)}.route.live:before{background:var(--cyan)}.route h3{font-size:21px}.route ol{margin:14px 0 0;padding-left:22px}.route li{margin:8px 0}.caption{margin-top:10px;color:var(--muted);font-size:14px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:var(--shadow)}table{width:100%;border-collapse:collapse;min-width:720px;font-size:14px;line-height:1.5}th,td{padding:15px 16px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}thead{background:#1d1932}th{font-size:13px;letter-spacing:.01em}tbody tr:last-child>*{border-bottom:0}.good{color:var(--cyan);font-weight:700}.partial{color:var(--orange);font-weight:700}.no{color:var(--rose);font-weight:700}.layers{display:grid;gap:10px;margin:22px 0}.layer{display:grid;grid-template-columns:145px 1fr;gap:18px;padding:16px 18px;border-left:3px solid var(--violet);background:var(--panel);border-radius:0 12px 12px 0}.layer:nth-child(2){border-color:var(--cyan)}.layer:nth-child(3){border-color:var(--orange)}.layer b{font-size:14px}.layer span{color:var(--muted)}code{padding:2px 5px;border-radius:5px;background:#242333;color:#e6e1ff;font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}.footnotes{color:var(--muted);font-size:14px}.footnotes li{margin:9px 0}footer{padding-top:25px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  @media(max-width:700px){.hero{padding:56px 0 42px}.hero p{font-size:18px}.grid{grid-template-columns:1fr}.callout{grid-template-columns:1fr;gap:8px}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg);justify-self:center}.layer{grid-template-columns:1fr;gap:4px}section{margin:48px 0}}
 </style>
 </head>
 <body>
 <header class="hero">
   <div class="wrap">
-    <div class="eyebrow">Architecture note · July 2026</div>
-    <h1>Snaps Without<br>a Server</h1>
-    <p>How mayfly combines chat-first media, direct browser-to-browser delivery, and a deliberately small encrypted fallback.</p>
-    <div class="meta"><span>mayfly vs. a store-and-forward model</span><a href="https://jay23606.github.io/peek/arch.html">Companion: The Zero-Server Stack</a><a href="https://github.com/jay23606/mayfly">Source code</a></div>
+    <div class="eyebrow">Implementation note &middot; reviewed July 2026</div>
+    <h1>Private media,<br>with the browser in charge.</h1>
+    <p>Mayfly is a chat-first PWA that keeps live full-resolution Snaps and calls on a direct browser-to-browser path, while using a small managed backend for identity, policy, signaling, encrypted fallbacks, and notifications.</p>
+    <div class="meta"><span>Mayfly architecture and product boundaries</span><a href="https://github.com/jay23606/mayfly">View source</a><a href="./">Open Mayfly</a></div>
   </div>
 </header>
 
 <main class="wrap">
-  <div class="abstract">
-    <div class="label">Short version</div>
-    <p>Most messaging systems upload media to a service, wait for the recipient, and delete it later. mayfly prefers direct WebRTC delivery: a full Snap travels between browsers. When that is impossible, it uses a small, recipient-encrypted photo relay with strict limits. It layers encrypted text, local chat history, Stories, live group media, Web Push, and calls around that choice. The gain is less readable media on the server; the cost is weaker offline delivery, network reliability, moderation, and multi-device recovery.</p>
+  <div class="callout">
+    <div class="label">The precise claim</div>
+    <p><strong>Mayfly is not serverless.</strong> It uses Supabase for authentication, Postgres, Row Level Security, Realtime signaling, private Storage, and Edge Functions. The architectural choice is narrower: when two people are online, the service is not the store for their full Snap or their call media. Their browsers exchange it over WebRTC instead.</p>
   </div>
 
-  <nav>
-    <a href="#decision">The design decision</a> · <a href="#routes">Delivery routes</a> · <a href="#experience">Client experience</a> · <a href="#bounds">Current limits</a> · <a href="#comparison">Comparison</a> · <a href="#tradeoffs">Tradeoffs</a>
+  <nav class="nav" aria-label="On this page">
+    <a href="#model">System model</a><a href="#paths">Data paths</a><a href="#product">Product layers</a><a href="#boundaries">Privacy boundaries</a><a href="#reliability">Reliability</a><a href="#audit">Audit map</a>
   </nav>
 
-  <section id="decision">
-    <h2><span class="num">01</span>The design decision</h2>
-    <p class="kicker">Where does the full image wait?</p>
-    <p>A conventional disappearing-media service is still a store-and-forward system. The full image is uploaded, retained until delivery or expiry, then removed under the provider&rsquo;s rules. That model is dependable: the recipient can be asleep, offline, or on a difficult network. It also means the provider operates the media path.</p>
-    <p>mayfly keeps the frontend on GitHub Pages and uses Supabase for accounts, metadata, real-time signaling, encrypted relay storage, Web Push triggers, and row-level access control. The media path is different: when both people are online, the full Snap moves directly between their browsers over WebRTC. The database sees a small preview and the information needed to route the event, not the full live image.</p>
-    <div class="flow">
-      <div class="node server">Store-and-forward<small>sender → service stores media → recipient</small></div><div class="arrow">↔</div><div class="node peer">mayfly live path<small>sender browser → recipient browser</small></div>
+  <section id="model">
+    <span class="num">01 &mdash; System model</span>
+    <h2>Static application. Managed coordination. Direct media.</h2>
+    <p class="lede">Mayfly is deliberately browser-first: it ships as static ES modules, has no frontend build step, and treats the browser as the place where capture, encryption, local history, decryption, and live media playback happen.</p>
+    <div class="flow" aria-label="Mayfly system model">
+      <div class="node browser">Sender browser<small>capture, local key, encryption, WebRTC</small></div><div class="arrow" aria-hidden="true">&harr;</div>
+      <div class="node service">Supabase<small>identity, RLS, metadata, signaling, relay, functions</small></div><div class="arrow" aria-hidden="true">&harr;</div>
+      <div class="node browser">Recipient browser<small>local key, decryption, local history, WebRTC</small></div>
     </div>
-  </section>
-
-  <section id="routes">
-    <h2><span class="num">02</span>Two delivery routes</h2>
-    <div class="routes">
-      <article class="route live">
-        <h3>Recipient online</h3>
-        <ul>
-          <li>Mayfly stores the full photo or video in the sender&rsquo;s browser.</li>
-          <li>Supabase Realtime carries the connection handshake and a small Snap row.</li>
-          <li>The recipient opens the Snap and pulls full media over WebRTC.</li>
-          <li>Opening records a receipt; timed Snaps are removed after their timer.</li>
-        </ul>
-      </article>
-      <article class="route offline">
-        <h3>Recipient offline</h3>
-        <ul>
-          <li>Photo only: video, voice clips, and file attachments remain live-only.</li>
-          <li>The photo is re-encoded into a bounded WebP/JPEG relay copy, encrypted to the recipient&rsquo;s public key, then stored as ciphertext.</li>
-          <li>When the recipient returns, their browser downloads and decrypts it locally.</li>
-          <li>The relay is removed when opened or when its delivery window expires.</li>
-        </ul>
-      </article>
-    </div>
-    <p class="caption">The offline path is not a full cloud inbox. It is an intentionally constrained escape hatch for a photo that cannot be delivered live.</p>
-  </section>
-
-  <section id="experience">
-    <h2><span class="num">03</span>Client experience, not cloud retention</h2>
-    <p class="kicker">The browser does the creative and conversational work</p>
-    <p>Mayfly is chat-first: a Snap with no timer becomes local media in the recipient&rsquo;s thread; a positive timer preserves the view-once treatment. Photo filters are rendered in a canvas before capture, while video keeps the browser&rsquo;s native recording path. Voice notes, files, group Snaps, and group calls are live peer-to-peer features rather than a durable media vault.</p>
-    <p>For background awareness, an opt-in service worker receives generic Web Push for 1:1 messages and incoming calls. The notification says that something arrived, not what an encrypted chat says. Opening the app restores the normal client-side delivery and decryption flow.</p>
-  </section>
-
-  <section id="bounds">
-    <h2><span class="num">04</span>Current bounds are part of the design</h2>
-    <p>Mayfly limits the server-side fallback rather than pretending it is a replacement for a media backend.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Feature</th><th>Current behavior</th></tr></thead>
+      <thead><tr><th>Layer</th><th>Current responsibility</th><th>What it intentionally does not do</th></tr></thead>
       <tbody>
-        <tr><th>Offline photo relay</th><td>Recipient-encrypted, re-encoded to ≤50 KB; one unopened relay per recipient and 100 outstanding relays per sender; expires after seven days.</td></tr>
-        <tr><th>Live Snaps</th><td>Full-quality peer-to-peer photo or video; normal Snap rows expire after 24 hours.</td></tr>
-        <tr><th>Stories</th><td>24-hour posts; five newest per account; an offline preview is capped at 20 KB while the full story remains peer-to-peer.</td></tr>
-        <tr><th>Direct text</th><td>End-to-end encrypted in transit and at rest; at most ten undelivered messages per offline recipient, with a seven-day TTL.</td></tr>
-        <tr><th>Group media and calls</th><td>Live peer-to-peer mesh. Group text uses member-only Realtime broadcast and is not durable history.</td></tr>
-        <tr><th>Background notification</th><td>Opt-in Web Push for 1:1 messages and incoming calls. Push payloads are generic; chat plaintext stays out of notifications.</td></tr>
+        <tr><th>Static PWA</th><td>UI, camera processing, local device state, WebRTC, client-side cryptography, service worker.</td><td>Run a custom application server or ship private backend credentials to users.</td></tr>
+        <tr><th>Supabase</th><td>Auth, Postgres records, Row Level Security, Realtime signaling, private relay storage, and optional Edge Functions.</td><td>Hold full live Snap/video payloads or device private keys.</td></tr>
+        <tr><th>WebRTC</th><td>Live 1:1 Snaps, calls, files, voice notes, group-media legs, and in-call activity state.</td><td>Guarantee a connection on every network without a TURN service.</td></tr>
+        <tr><th>Browser storage</th><td>Device key material, local conversation history, Memories, and Clips preferences.</td><td>Provide cross-device backup or account recovery by itself.</td></tr>
       </tbody>
     </table></div>
+  </section>
+
+  <section id="paths">
+    <span class="num">02 &mdash; Data paths</span>
+    <h2>Four different paths, chosen by the feature.</h2>
+    <p class="lede">The word &ldquo;private&rdquo; means different things for different Mayfly features. The important question is not whether a feature has a server, but what it sends there, in what form, and for how long.</p>
+
+    <div class="grid">
+      <article class="route live">
+        <h3>1. Live Snap or call</h3>
+        <ol>
+          <li>The sender captures photo/video in the browser. The original stays on the sending device.</li>
+          <li>Supabase Realtime carries connection signaling; the app records a small Snap row for routing and receipts.</li>
+          <li>When the recipient opens it, full media travels over a WebRTC data/media channel between the two browsers.</li>
+          <li>The recipient&rsquo;s local client renders it and the Snap state advances to delivered/opened/expired.</li>
+        </ol>
+        <p class="caption"><span class="good">Result:</span> the backend does not store the live full-resolution payload.</p>
+      </article>
+      <article class="route">
+        <h3>2. Offline photo relay</h3>
+        <ol>
+          <li>If a recipient is offline, Mayfly re-encodes a <strong>photo only</strong> to fit a 50 KB relay budget.</li>
+          <li>The sender creates an ephemeral ECDH P-256 key, derives AES-GCM encryption for the recipient&rsquo;s published key, and uploads ciphertext to private Storage.</li>
+          <li>On return, the recipient&rsquo;s browser downloads and decrypts that relay with its device-local private key.</li>
+          <li>One unopened relay per recipient and 100 outstanding relays per sender are allowed; unopened relays have a seven-day delivery window.</li>
+        </ol>
+        <p class="caption"><span class="partial">Result:</span> a constrained fallback, not a cloud media inbox. Video has no offline relay.</p>
+      </article>
+      <article class="route">
+        <h3>3. Direct encrypted chat</h3>
+        <ol>
+          <li>1:1 text is encrypted in the sender&rsquo;s browser to the recipient&rsquo;s public key.</li>
+          <li>The database receives ciphertext, an IV, an ephemeral public key, and routing metadata.</li>
+          <li>The recipient decrypts locally; the app keeps local thread history and removes the delivery row after ingesting it.</li>
+          <li>Undelivered text is capped at ten messages per recipient and expires after seven days.</li>
+        </ol>
+        <p class="caption"><span class="good">Result:</span> the server stores ciphertext for the 1:1 message body, not plaintext.</p>
+      </article>
+      <article class="route">
+        <h3>4. Group and live extras</h3>
+        <ol>
+          <li>Group membership is persistent and protected by database policy.</li>
+          <li>Open group text uses member-authorized Realtime Broadcast and is intentionally non-durable.</li>
+          <li>Group media, group calls, voice clips, files, and in-call games use live peer-to-peer paths.</li>
+          <li>Games exchange small control/state messages; their modules load on demand when a call starts.</li>
+        </ol>
+        <p class="caption"><span class="partial">Important:</span> private Realtime authorization is not the same claim as end-to-end encryption for group text.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="product">
+    <span class="num">03 &mdash; Product layers</span>
+    <h2>The original delivery model is now a larger product.</h2>
+    <p class="lede">Mayfly began around ephemeral media, but its current shape is a browser-native social space. These layers sit on top of the core delivery choices rather than replacing them.</p>
+    <div class="layers">
+      <div class="layer"><b>Capture &amp; expression</b><span>Photo/video Snaps, canvas-based photo filters, captions, timers, 24-hour Stories, replies, receipts, and streaks. A small visual preview and Snap metadata are stored to make the inbox usable; original live media stays on the P2P path.</span></div>
+      <div class="layer"><b>Conversation &amp; calls</b><span>Encrypted 1:1 text, GIFs/stickers via GIPHY, live attachments, voice notes, 1:1 video/voice calls, persistent groups, and group mesh calls. Shared Chess, Geometry Dash, Pac-Man, Pool, Air Hockey, Scrabble, Trivia, Icebreakers, Stack, and Tetris run inside 1:1 calls; the public Mayfly site currently loads those activity modules on demand from the sibling Appmegle deployment.</span></div>
+      <div class="layer"><b>Local-first discovery</b><span>Memories are stored only in IndexedDB on the current browser and can be deleted there. Clips use a YouTube-backed feed; saved clips, follows, likes, hidden videos, captions, interests, and the last search are browser-local preferences. Clip shares arrive as embedded playable YouTube cards in chat.</span></div>
+      <div class="layer"><b>Profiles &amp; control</b><span>Profiles expose a photo, username, bio, friend count, and join date. A user can hide their profile from Add People; an administrator can force that privacy state and prevent new friend requests while it is locked.</span></div>
+    </div>
+  </section>
+
+  <section id="boundaries">
+    <span class="num">04 &mdash; Privacy boundaries</span>
+    <h2>The server is smaller, not blind.</h2>
+    <p class="lede">A useful privacy description names what remains visible. Mayfly reduces the backend&rsquo;s role in full media delivery; it does not make the backend, external providers, or recipients disappear.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data or event</th><th>Backend can handle or observe</th><th>Backend does not receive as plaintext/full media</th></tr></thead>
+      <tbody>
+        <tr><th>Live 1:1 Snap / call</th><td>Account identity, signaling, status rows, timestamps, recipients, a small Snap preview, and any supplied caption.</td><td class="good">The full live photo/video payload and call media.</td></tr>
+        <tr><th>Offline photo Snap</th><td>Relay ciphertext, encryption metadata, recipient/sender relation, lifecycle metadata, a small preview, and caption.</td><td class="good">The relay photo&rsquo;s plaintext, assuming the recipient device key remains private.</td></tr>
+        <tr><th>1:1 text message</th><td>Recipient/sender IDs, timestamps, delivery state, ciphertext, IV, and ephemeral public key.</td><td class="good">The message body plaintext.</td></tr>
+        <tr><th>Group text</th><td>Member-authorized Realtime Broadcast traffic while it is live; group membership and metadata.</td><td class="no">No durable group-text history is written by the current design, but it is not presented as end-to-end encrypted text.</td></tr>
+        <tr><th>Memories / Clips preferences</th><td>Clips searches pass through a YouTube-backed Edge Function, but browser-local Memories plus saved/liked/followed/hidden Clip preferences are not synced by default.</td><td class="good">Memory media and local Clips choices, unless a user explicitly shares a Clip in chat.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <div class="label">Recipient boundary</div>
+      <p>Neither WebRTC nor encrypted storage can stop a recipient from taking a screenshot, recording a screen, re-sharing media, or showing it to another person. &ldquo;Ephemeral&rdquo; describes the application&rsquo;s delivery and retention behavior, not control over what a recipient does after viewing.</p>
+    </div>
+  </section>
+
+  <section id="reliability">
+    <span class="num">05 &mdash; Reliability and safety</span>
+    <h2>The trade is real, and it should stay visible.</h2>
+    <div class="grid">
+      <article class="card accent-cyan"><h3>What this design gains</h3><ul><li>Full live media is not kept in an application-controlled media library.</li><li>Offline photo fallback is encrypted before private Storage receives it.</li><li>Local Memories and Clips preferences do not become backend features by default.</li><li>The deployable stack is compact: static hosting, browser APIs, and managed backend services.</li></ul></article>
+      <article class="card accent-orange"><h3>What it gives up today</h3><ul><li>No offline relay for video Snaps, voice notes, files, or live group media.</li><li>No configured TURN relay, so calls and P2P delivery can fail on restrictive or cellular networks.</li><li>No shared multi-device key-recovery model; device-local keys are a deliberate constraint.</li><li>Expired relay cleanup is client-triggered today, rather than a scheduled server job.</li><li>Limited server-side moderation of full media, precisely because full media is not hosted there.</li></ul></article>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <article class="card accent-violet"><h3>External services remain in scope</h3><p>Clips use YouTube search/embed infrastructure, and GIFs/stickers use GIPHY through Edge Functions. Those providers have their own availability, terms, privacy behavior, and content rules. A Mayfly deployment should be explicit about that.</p></article>
+      <article class="card accent-rose"><h3>Security is a system property</h3><p>Browser crypto and Row Level Security are useful building blocks, not a substitute for production operating practices: a configured TURN service, key-rotation/recovery decisions, abuse reporting, rate limits, audit logs where appropriate, backup policies, and independent review before handling sensitive users or claims.</p></article>
+    </div>
   </section>
 
   <section id="comparison">
-    <h2><span class="num">05</span>What changes when the server leaves the media path</h2>
+    <span class="num">06 &mdash; Compared with a store-and-forward model</span>
+    <h2>Different default, different responsibility.</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>Question</th><th>Store-and-forward service</th><th>mayfly</th></tr></thead>
+      <thead><tr><th>Question</th><th>Typical hosted media service</th><th>Mayfly&rsquo;s current default</th></tr></thead>
       <tbody>
-        <tr><th>Where is the full media?</th><td>On provider infrastructure until it is delivered or deleted.</td><td>On endpoints for live delivery; otherwise ciphertext in a small relay.</td></tr>
-        <tr><th>Who operates delivery?</th><td>The provider&rsquo;s storage, CDN, and notification infrastructure.</td><td>The two browsers when connected; Supabase supplies signaling and metadata.</td></tr>
-        <tr><th>Offline reliability</th><td class="yes">Strong</td><td class="partial">Partial and deliberately bounded</td></tr>
-        <tr><th>Readable-media breach surface</th><td>The provider has a media store to protect.</td><td>Live media is absent from the server; relay media is encrypted, but previews and metadata remain.</td></tr>
-        <tr><th>Moderation and abuse tooling</th><td class="yes">Possible because the service can inspect and act on hosted content.</td><td class="partial">Much harder; a system that cannot read media also cannot scan it at scale.</td></tr>
+        <tr><th>Where does a full live Snap wait?</th><td>Provider storage/CDN until delivered, viewed, or expired.</td><td>On the sender&rsquo;s browser, then directly on the recipient&rsquo;s browser when connected.</td></tr>
+        <tr><th>What happens while the recipient is offline?</th><td class="good">Usually durable, full-quality queued delivery.</td><td class="partial">A small encrypted photo relay only; video and other live media wait for presence.</td></tr>
+        <tr><th>Where does private text wait?</th><td>Typically provider-managed message storage.</td><td>Recipient-encrypted ciphertext, with local history after ingestion.</td></tr>
+        <tr><th>What can be moderated centrally?</th><td class="good">Hosted media and retained messages can support server-side review.</td><td class="partial">Metadata, accounts, and reports are available; live full media is not centrally retained for scanning.</td></tr>
+        <tr><th>What is the operational challenge?</th><td>Protect and scale a large durable media system.</td><td>Make peer connections reliable, explain local-state limits, and design safe fallbacks.</td></tr>
       </tbody>
     </table></div>
   </section>
 
-  <section id="tradeoffs">
-    <h2><span class="num">06</span>The honest trade</h2>
-    <div class="trade">
-      <div class="card gain"><h3>What mayfly gains</h3><ul><li>Live full media does not sit in an application media store.</li><li>Relay media is encrypted to the intended recipient.</li><li>Creative capture, media history, and presentation stay in the client.</li><li>The stack is compact: static hosting, managed database services, and browser APIs.</li></ul></div>
-      <div class="card loss"><h3>What mayfly gives up</h3><ul><li>No guaranteed full-quality offline photo or video delivery.</li><li>No TURN relay yet, so direct peer connections can fail on restrictive or cellular networks.</li><li>No server-side content moderation pipeline or rich cloud features.</li><li>Device-local keys and media make recovery and multi-device use harder.</li></ul></div>
-    </div>
-    <div class="callout"><div class="label">Important boundary</div><p>Neither architecture can prevent a recipient from taking a screenshot or recording a screen. &ldquo;Ephemeral&rdquo; describes delivery and retention behavior, not control over what a human does after viewing.</p></div>
+  <section id="audit">
+    <span class="num">07 &mdash; Audit map</span>
+    <h2>Claims should be traceable to code.</h2>
+    <p class="lede">This note describes the published Mayfly implementation, not a claim about every future deployment. The source is short enough that the primary paths can be inspected directly.</p>
+    <ol class="footnotes">
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/core.js"><code>core.js</code></a> handles browser media processing, preview sizing, the 50 KB relay budget, Stories previews, and IndexedDB setup.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/crypto.js"><code>crypto.js</code></a> implements the ECDH P-256 to AES-GCM recipient encryption used by relays and direct messages.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/rtc.js"><code>rtc.js</code></a> contains WebRTC signaling and currently has an empty TURN configuration.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/chat.js"><code>chat.js</code></a>, <a href="https://github.com/jay23606/mayfly/blob/main/groups.js"><code>groups.js</code></a>, and <a href="https://github.com/jay23606/mayfly/blob/main/callapps.js"><code>callapps.js</code></a> implement conversations, group/live media, calls, and activities.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/schema.sql"><code>schema.sql</code></a> defines the tables, lifecycle fields, storage policies, profile privacy rules, and Realtime authorization.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/clips.js"><code>clips.js</code></a> and <a href="https://github.com/jay23606/mayfly/blob/main/memories.js"><code>memories.js</code></a> distinguish YouTube-based Clips from browser-only Memories.</li>
+    </ol>
   </section>
 
   <section>
-    <h2><span class="num">07</span>Conclusion</h2>
-    <p>mayfly is not a replacement for a global social platform. It is a different answer to a narrower problem: private, chat-first sharing among people who are usually online. The core claim is modest: a service does not need to hold every full image in order to provide Snaps, Stories, encrypted chat, groups, notifications, and calls. For that product shape, direct delivery plus a bounded encrypted fallback is a useful architectural default.</p>
+    <span class="num">08 &mdash; Conclusion</span>
+    <h2>Mayfly is a practical privacy posture, not a magic word.</h2>
+    <p>Its most distinctive choice is to let the browser carry the highest-value live payloads directly whenever it can, while keeping the backend responsible for the coordination a real social product still needs. The result is neither a conventional cloud inbox nor a purely peer-to-peer toy. It is a browser-first social application with explicit, inspectable limits&mdash;and those limits are part of the product.</p>
   </section>
 
-  <section class="sources">
-    <h3>Notes</h3>
-    <p>This page describes the current <a href="https://github.com/jay23606/mayfly">mayfly source</a>, especially <code>app.js</code>, <code>chat.js</code>, <code>rtc.js</code>, <code>crypto.js</code>, <code>push.js</code>, and <code>schema.sql</code>. The broader static-app and row-level-security framing comes from <a href="https://jay23606.github.io/peek/arch.html">The Zero-Server Stack</a>. Snapchat is used here as the familiar store-and-forward contrast, not as a full product or policy audit.</p>
-  </section>
-  <footer>Prepared as a concise architecture comparison between peer-to-peer ephemeral messaging and server-hosted media delivery.</footer>
+  <footer>Last reviewed July 2026 against the Mayfly source. This is an implementation note, not a security audit, legal opinion, or guarantee of confidentiality.</footer>
 </main>
 </body>
 </html>

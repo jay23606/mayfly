@@ -47,10 +47,13 @@ const db = {
         .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
         .like('delivery', 'relay%').is('viewed_at', null).gt('expires_at', new Date().toISOString()),
     // total unopened, non-expired relay snaps I've sent across all recipients — the hard per-sender cap
-    pendingRelayTotal: () => sb.from('mf_snaps')
+    pendingLegacyRelayTotal: () => sb.from('mf_snaps')
         .select('id', { count: 'exact', head: true })
-        .eq('sender_id', state.me.id).like('delivery', 'relay%')
+        .eq('sender_id', state.me.id).like('delivery', 'relay%').is('relay_id', null)
         .is('viewed_at', null).gt('expires_at', new Date().toISOString()),
+    pendingSharedRelayTotal: () => sb.from('mf_relay_payloads')
+        .select('id', { count: 'exact', head: true })
+        .eq('sender_id', state.me.id).gt('expires_at', new Date().toISOString()),
     addSnap: (row) => sb.from('mf_snaps').insert(row).select().maybeSingle(),
     markSnapDelivered: (id) => sb.from('mf_snaps').update({ delivered_at: new Date().toISOString() })
         .eq('id', id).is('delivered_at', null),
@@ -61,7 +64,11 @@ const db = {
     // snaps I sent that have now been opened / expired → clean up my device copies
     mySpentSnaps: () => sb.from('mf_snaps').select('id').eq('sender_id', state.me.id),
     // expired snaps I'm party to (RLS scopes to sender/recipient) → swept on boot: rows + relay blobs
-    myExpiredSnaps: () => sb.from('mf_snaps').select('id, delivery').lt('expires_at', new Date().toISOString()),
+    myExpiredSnaps: () => sb.from('mf_snaps').select('id, delivery, relay_id').lt('expires_at', new Date().toISOString()),
+    addRelayPayload: (row) => sb.from('mf_relay_payloads').insert(row),
+    relayPayload: (id) => sb.from('mf_relay_payloads').select('id, content_iv, mime, expires_at').eq('id', id).maybeSingle(),
+    myExpiredRelayPayloads: () => sb.from('mf_relay_payloads').select('id').eq('sender_id', state.me.id).lt('expires_at', new Date().toISOString()),
+    delRelayPayloads: (ids) => sb.from('mf_relay_payloads').delete().in('id', ids),
 
     // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
     // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,

@@ -1,0 +1,5 @@
+-- Historical baseline for the linked production project.
+--
+-- The initial Mayfly schema was applied directly from schema.sql before this
+-- repository began tracking individual Supabase migrations. New deployments
+-- should run schema.sql first, then apply the migrations in this directory.

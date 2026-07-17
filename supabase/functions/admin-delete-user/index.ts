@@ -31,9 +31,14 @@ Deno.serve(async (req) => {
   const { data: profile, error: profileError } = await admin.from("mf_profiles").select("id, username").eq("id", targetId).maybeSingle();
   if (profileError || !profile) return json({ error: "Mayfly user not found" }, 404);
 
-  const { data: snaps, error: snapError } = await admin.from("mf_snaps").select("id").or(`sender_id.eq.${targetId},recipient_id.eq.${targetId}`);
+  const { data: snaps, error: snapError } = await admin.from("mf_snaps").select("id, delivery, relay_id").or(`sender_id.eq.${targetId},recipient_id.eq.${targetId}`);
   if (snapError) return json({ error: "could not collect relay media" }, 500);
-  const paths = (snaps || []).map((snap) => snap.id);
+  const { data: shared, error: sharedError } = await admin.from("mf_relay_payloads").select("id").eq("sender_id", targetId);
+  if (sharedError) return json({ error: "could not collect shared relay media" }, 500);
+  const paths = [
+    ...(snaps || []).filter((snap) => snap.delivery?.startsWith("relay") && !snap.relay_id).map((snap) => snap.id),
+    ...(shared || []).map((payload) => payload.id),
+  ];
   if (paths.length) {
     const { error: storageError } = await admin.storage.from("mf-snaps").remove(paths);
     if (storageError) return json({ error: "could not remove relay media" }, 500);

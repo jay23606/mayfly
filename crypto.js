@@ -9,6 +9,7 @@
 import { idb } from './core.js';
 
 const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+const AES = { name: 'AES-GCM', length: 256 };
 const b64 = {
     enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))),
     dec: (s)  => Uint8Array.from(atob(s), c => c.charCodeAt(0)),
@@ -50,6 +51,24 @@ export async function decryptWith(myPriv, ephPubStr, ivB64, ctBuf) {
     const aes = await crypto.subtle.deriveKey({ name: 'ECDH', public: ephPub }, myPriv,
         { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
     return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(ivB64) }, aes, ctBuf);
+}
+
+// A fan-out relay stores the media ciphertext once. Each recipient receives an
+// individually ECDH-wrapped copy of the random payload key.
+export async function encryptSharedRelay(bytes) {
+    const key = await crypto.subtle.generateKey(AES, true, ['encrypt', 'decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
+    return { ciphertext, content_iv: b64.enc(iv), rawKey: await crypto.subtle.exportKey('raw', key) };
+}
+export async function wrapSharedRelayKey(recipientPubJwk, rawKey) {
+    const { ct, iv, ephPub } = await encryptFor(recipientPubJwk, rawKey);
+    return { wrapped_key: b64.enc(ct), iv, eph_pub: ephPub };
+}
+export async function decryptSharedRelay(myPriv, ephPubStr, wrappedKeyIv, wrappedKeyB64, contentIvB64, ciphertext) {
+    const rawKey = await decryptWith(myPriv, ephPubStr, wrappedKeyIv, b64.dec(wrappedKeyB64));
+    const key = await crypto.subtle.importKey('raw', rawKey, AES, false, ['decrypt']);
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(contentIvB64) }, key, ciphertext);
 }
 
 // Convenience wrappers for short text (chat messages): everything base64 so it fits

@@ -9,7 +9,7 @@ It is intentionally **not serverless**: the static frontend uses Supabase for au
 ## Highlights
 
 - **Live peer-to-peer media** — full photo/video Snaps, voice notes, files, 1:1 calls, group calls, and group media use browser-to-browser WebRTC paths when peers are online.
-- **Bounded encrypted fallback** — an offline photo is re-encoded to at most 50 KB, encrypted to the recipient's device key with ECDH P-256 + AES-GCM, and placed in private Storage. Video remains live-only.
+- **Bounded encrypted fallback** — an offline photo is re-encoded to at most 50 KB and encrypted once for Storage; each recipient receives their own ECDH-wrapped content key. Video remains live-only.
 - **Chat that stays client-first** — 1:1 text is encrypted before it reaches the database; delivered messages become device-local conversation history. Timed Snaps remain view-once, while untimed Snaps stay in local chat.
 - **Social layer** — 24-hour Stories, replies, viewers, streaks, public profiles, friend privacy controls, and administrator-enforced privacy locks.
 - **Clips, GIFs, and stickers** — a YouTube-backed Clips feed with local likes/saves/follows/interests and embedded chat shares; GIPHY-powered GIFs and stickers in chat.
@@ -23,7 +23,7 @@ It is intentionally **not serverless**: the static frontend uses Supabase for au
 | **Online** | live WebRTC | directly between the sender's and recipient's browsers |
 | **Offline** | encrypted photo relay | ciphertext in a private Storage bucket; the recipient decrypts it locally |
 
-- The offline fallback allows one unopened relay per recipient and 100 total outstanding relays per sender. Unopened relays expire after seven days.
+- The offline fallback allows one unopened relay per recipient and 100 total outstanding relay payloads per sender. One payload can safely fan out to many recipients, each with a separate encrypted key envelope. Unopened relays expire after seven days.
 - Live Snaps use the normal 24-hour delivery window. Video, voice notes, files, and live group media do not have an offline relay.
 - The backend still handles routing and lifecycle metadata, a tiny Snap preview, and any supplied caption. It does not receive the full live Snap or call-media payload.
 - A recipient can still screenshot, record, or re-share what they receive. Ephemeral delivery is not DRM.

@@ -4,7 +4,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
 import { db } from './db.js';
 import { initPush, registerSW, enablePush, disablePush, pushPreference } from './push.js';
 import { startRtc, fetchSnap } from './rtc.js';
-import { loadOrCreateKeys, encryptFor, decryptWith } from './crypto.js';
+import { loadOrCreateKeys, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
 import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
@@ -12,7 +12,7 @@ import { viewClips, closeClips } from './clips.js';
 import { saveMemory, viewMemories, closeMemories } from './memories.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
-const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding offline (relay) snaps
+const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding encrypted relay payloads
 const RELAY_TTL_DAYS = 7;    // an offline snap self-destructs a week after it's sent if never opened
 // The database RPC below independently verifies this immutable auth-user ID.
 // This client check only controls whether the management UI is shown.
@@ -340,8 +340,10 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         send.disabled = true;
         const caption = $('#cap').value.trim();
         // Friends receive an individual Snap; groups receive it in their chat only.
-        const targets = list.filter(u => directIds.includes(u.id));
+        let targets = list.filter(u => directIds.includes(u.id));
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
+        const offlineTargets = targets.filter(u => !isOnline(u.id));
+        targets = targets.filter(u => isOnline(u.id));
         let ok = 0, blocked = 0, novideo = 0, toomany = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
@@ -349,7 +351,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         for (let i = 0; i < targets.length; i += SEND_BATCH_SIZE) {
             const batch = targets.slice(i, i + SEND_BATCH_SIZE);
             send.textContent = `Sending ${done + 1}–${Math.min(done + batch.length, targets.length)} of ${targets.length}…`;
-            const results = await Promise.all(batch.map(u => sendSnap(shot, u, caption, timer)));
+            const results = await Promise.all(batch.map(u => sendLiveSnap(shot, u, caption, timer)));
             results.forEach((r, index) => {
                 if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
@@ -357,6 +359,15 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
                 else if (r === 'toomany') toomany++;
             });
             done += batch.length;
+        }
+        if (offlineTargets.length) {
+            if (shot.mime?.startsWith('video/')) novideo += offlineTargets.length;
+            else {
+                send.textContent = `Preparing one encrypted relay for ${offlineTargets.length} friend${offlineTargets.length === 1 ? '' : 's'}...`;
+                const relay = await sendSharedRelay(shot, offlineTargets, caption, timer);
+                relay.sent.forEach(({ uid, id, kind }) => { ok++; noteSentSnap(uid, id, kind); });
+                blocked += relay.blocked; toomany += relay.toomany;
+            }
         }
         if (selectedGroups.length) {
             const file = await snapFile();
@@ -375,48 +386,80 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
     };
 };
 
-// Send one snap. Online recipient → live P2P (no server media). Offline → encrypted
-// relay, capped at ONE unopened relay snap per recipient. Returns {id, kind} | 'cap' | false.
-const sendSnap = async (shot, u, caption, secs) => {
+// Live recipients keep the original media in the sender's browser and pull it P2P.
+const sendLiveSnap = async (shot, u, caption, secs) => {
     const base = { sender_id: state.me.id, recipient_id: u.id, preview: shot.preview,
         caption, w: shot.w, h: shot.h, timer: secs };
     const kind = shot.mime?.startsWith('video/') ? 'video' : 'photo';
-    // Live P2P keeps the original MIME (rawBlob may be PNG/WebP/native JPEG). The relay
-    // is re-encoded to a size-capped WebP, so its tag reflects that format instead.
-    const taggedDelivery = (k, m) => `${k}:${encodeURIComponent(m || shot.mime || 'image/jpeg')}`;
     try {
-        if (isOnline(u.id)) {
-            const id = uuid();
-            // Store before announcing the row so every recipient can pull the payload
-            // as soon as their realtime notification arrives.
-            await idb.set('snap:' + id, shot.rawBlob || shot.full);
-            const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('live') });
-            if (error) { await idb.del('snap:' + id); throw error; }
-            db.bumpStreak(u.id).then(() => {}, () => {});
-            return { id, kind };
-        }
-        // offline → relay. Video is live-only (no small cap fits a clip); images only.
-        if (kind === 'video') return 'novideo';
-        // Enforce the one-pending-per-recipient cap...
-        const { count } = await db.pendingRelayTo(u.id);
-        if (count && count >= 1) return 'cap';
-        // ...and a hard per-sender ceiling of 100 outstanding offline snaps (≤100×50 KB in Storage).
-        const { count: total } = await db.pendingRelayTotal();
-        if (total && total >= RELAY_LIMIT) return 'toomany';
-        if (!u.pubkey) { toast(`${u.username} hasn't finished setting up mayfly.`); return false; }
+        if (!isOnline(u.id)) return false;
         const id = uuid();
-        // Re-encode to a WebP that fits the relay budget (the live copy stays full-res).
-        const { bytes, mime } = await makeRelayImage(shot.rawBlob || await fetch(shot.full).then(r => r.blob()));
-        const { ct, iv, ephPub } = await encryptFor(JSON.parse(u.pubkey), bytes);
-        const up = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ct]), { contentType: 'application/octet-stream', upsert: false });
-        if (up.error) throw up.error;
-        // Offline snaps get a week to be opened (live snaps keep the 24h default).
-        const expires_at = new Date(Date.now() + RELAY_TTL_DAYS * 24 * 3600 * 1000).toISOString();
-        const { error } = await db.addSnap({ ...base, id, delivery: taggedDelivery('relay', mime), iv, eph_pub: ephPub, expires_at });
-        if (error) { await sb.storage.from(SNAP_BUCKET).remove([id]); throw error; }
+        await idb.set('snap:' + id, shot.rawBlob || shot.full);
+        const { error } = await db.addSnap({ ...base, id, delivery: `live:${encodeURIComponent(shot.mime || 'image/jpeg')}` });
+        if (error) { await idb.del('snap:' + id); throw error; }
         db.bumpStreak(u.id).then(() => {}, () => {});
         return { id, kind };
     } catch (e) { console.error('[mayfly] send failed', e); return false; }
+};
+
+// One encrypted media payload, with a small recipient-specific wrapped key per row.
+const sendSharedRelay = async (shot, targets, caption, secs) => {
+    const result = { sent: [], blocked: 0, toomany: 0 };
+    const checked = await Promise.all(targets.map(async (u) => {
+        if (!u.pubkey) return { u, ok: false };
+        const { count } = await db.pendingRelayTo(u.id);
+        if (count && count >= 1) return { u, ok: false, blocked: true };
+        try { return { u, ok: true, pubkey: JSON.parse(u.pubkey) }; }
+        catch (e) { return { u, ok: false }; }
+    }));
+    const recipients = checked.filter(item => item.ok);
+    result.blocked = checked.filter(item => item.blocked).length;
+    if (!recipients.length) return result;
+
+    const [{ count: legacy }, { count: shared }] = await Promise.all([db.pendingLegacyRelayTotal(), db.pendingSharedRelayTotal()]);
+    if ((legacy || 0) + (shared || 0) >= RELAY_LIMIT) { result.toomany = recipients.length; return result; }
+
+    const id = uuid();
+    const expires_at = new Date(Date.now() + RELAY_TTL_DAYS * 24 * 3600 * 1000).toISOString();
+    let payloadCreated = false;
+    try {
+        const source = shot.rawBlob || await fetch(shot.full).then(r => r.blob());
+        const { bytes, mime } = await makeRelayImage(source);
+        const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(bytes);
+        const { error: payloadError } = await db.addRelayPayload({ id, sender_id: state.me.id, content_iv, mime, expires_at });
+        if (payloadError) throw payloadError;
+        payloadCreated = true;
+        const upload = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ciphertext]), { contentType: 'application/octet-stream', upsert: false });
+        if (upload.error) throw upload.error;
+
+        const rows = await Promise.all(recipients.map(async ({ u, pubkey }) => {
+            try {
+                const key = await wrapSharedRelayKey(pubkey, rawKey);
+                const snapId = uuid();
+                const { error } = await db.addSnap({
+                    id: snapId, sender_id: state.me.id, recipient_id: u.id,
+                    preview: shot.preview, caption, w: shot.w, h: shot.h, timer: secs,
+                    delivery: `relay-shared:${encodeURIComponent(mime)}`,
+                    relay_id: id, wrapped_key: key.wrapped_key, iv: key.iv, eph_pub: key.eph_pub, expires_at,
+                });
+                if (error) throw error;
+                return { uid: u.id, id: snapId, kind: 'photo' };
+            } catch (e) { console.error('[mayfly] shared relay recipient failed', e); return null; }
+        }));
+        result.sent = rows.filter(Boolean);
+        result.sent.forEach(({ uid }) => db.bumpStreak(uid).then(() => {}, () => {}));
+        if (!result.sent.length) {
+            await sb.storage.from(SNAP_BUCKET).remove([id]);
+            await db.delRelayPayloads([id]);
+        }
+    } catch (e) {
+        console.error('[mayfly] shared relay failed', e);
+        if (payloadCreated) {
+            await sb.storage.from(SNAP_BUCKET).remove([id]);
+            await db.delRelayPayloads([id]);
+        }
+    }
+    return result;
 };
 
 // Post to My Story: a 24h broadcast to all friends. The full image stays in our
@@ -976,9 +1019,14 @@ const sweepLocal = async () => {
         // No server cron, so each client garbage-collects the expired snaps it's party to:
         // delete the rows and, for relays, remove the encrypted Storage blobs. This keeps
         // unopened-and-expired offline snaps from accumulating in the database or the bucket.
-        const { data: expired } = await db.myExpiredSnaps();
+        const [{ data: expired }, { data: expiredPayloads }] = await Promise.all([db.myExpiredSnaps(), db.myExpiredRelayPayloads()]);
+        if (expiredPayloads?.length) {
+            const ids = expiredPayloads.map(payload => payload.id);
+            try { await sb.storage.from(SNAP_BUCKET).remove(ids); } catch (e) {}
+            await db.delRelayPayloads(ids);
+        }
         if (expired?.length) {
-            const relayIds = expired.filter(r => r.delivery?.startsWith('relay')).map(r => r.id);
+            const relayIds = expired.filter(r => r.delivery?.startsWith('relay') && !r.relay_id).map(r => r.id);
             if (relayIds.length) { try { await sb.storage.from(SNAP_BUCKET).remove(relayIds); } catch (e) {} }
             await db.delSnaps(expired.map(r => r.id));
         }

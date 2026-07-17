@@ -2,7 +2,7 @@ import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
-import { encryptText, decryptText, decryptWith } from './crypto.js';
+import { encryptText, decryptText, decryptWith, decryptSharedRelay } from './crypto.js';
 import { browserNotificationsEnabled } from './push.js';
 import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from './callapps.js';
 
@@ -566,7 +566,17 @@ const openSnap = async (s, card) => {
     let full = null;
     try {
         if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id);
-        else { const dl = await sb.storage.from(SNAP_BUCKET).download(s.id); if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); } }
+        else if (s.relay_id) {
+            const { data: relay } = await db.relayPayload(s.relay_id);
+            const dl = relay && await sb.storage.from(SNAP_BUCKET).download(s.relay_id);
+            if (relay && dl && !dl.error) {
+                const pt = await decryptSharedRelay(state.priv, s.eph_pub, s.iv, s.wrapped_key, relay.content_iv, await dl.data.arrayBuffer());
+                full = URL.createObjectURL(new Blob([pt], { type: relay.mime || snapMime(s) }));
+            }
+        } else {
+            const dl = await sb.storage.from(SNAP_BUCKET).download(s.id);
+            if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); }
+        }
     } catch (e) { console.error('[mayfly] open snap', e); }
     if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card, false); }
     const video = snapMime(s).startsWith('video/');
@@ -621,7 +631,8 @@ const openSnap = async (s, card) => {
 const burnSnap = async (s, card, wasOpened = true) => {
     if (wasOpened) await db.markSnapOpened(s.id);
     await db.delSnap(s.id);
-    if (s.delivery?.startsWith('relay')) sb.storage.from(SNAP_BUCKET).remove([s.id]);
+    // A shared relay stays available for its other recipients until expiry.
+    if (s.delivery?.startsWith('relay') && !s.relay_id) sb.storage.from(SNAP_BUCKET).remove([s.id]);
     inboxByUser[s.sender_id] = (inboxByUser[s.sender_id] || []).filter(x => x.id !== s.id);
     card?.remove();
     if (convBox) renderConvs(convBox, openUid);

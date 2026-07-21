@@ -403,7 +403,7 @@ export const openConversation = async (box, uid) => {
 };
 
 // Merge local history + unopened snap cards into one chronological timeline.
-const closeMessageMenus = (except = null) => document.querySelectorAll('.messagemenu:not([hidden])').forEach(menu => { if (menu !== except) menu.hidden = true; });
+const closeMessageMenus = (except = null) => document.querySelectorAll('.messagemenu:not([hidden]), .reactiontray:not([hidden])').forEach(menu => { if (menu !== except) menu.hidden = true; });
 const renderThreadBody = async (uid, preserveScroll = false) => {
     const body = $('#tbody'); if (!body || openUid !== uid) return;
     const scrollTop = body.scrollTop;
@@ -441,7 +441,7 @@ const renderThreadBody = async (uid, preserveScroll = false) => {
     if (last && !last.snap && last.entry?.me && last.entry.kind === 'text' && last.entry.msgId) {
         body.appendChild(el(textReceipt(deliveredMsgIds.has(last.entry.msgId) || last.entry.status === 'delivered')));
     }
-    body.onclick = (event) => { if (!event.target.closest('.messagemenu, .messagemore')) closeMessageMenus(); };
+    body.onclick = (event) => { if (!event.target.closest('.messagemenu, .reactiontray, .messagemore')) closeMessageMenus(); };
     body.scrollTop = preserveScroll ? Math.min(scrollTop, body.scrollHeight) : body.scrollHeight;
 };
 const snapCard = (s) => {
@@ -458,26 +458,26 @@ const updateLocalEntry = async (uid, localId, update) => {
 const messageCard = (uid, e, content) => {
     if (e.saved) content.classList.add('saved');
     if (e.reaction) content.appendChild(el(`<span class="localreaction">${esc(e.reaction)}</span>`));
-    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="messagecontent"></div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 18)}</button><button data-action="love" aria-label="Like" title="Like">${icon('heart', 18)}</button><button data-action="react" aria-label="Thumbs up" title="Thumbs up">${icon('thumbsUp', 18)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 18)}</button><button data-action="delete" aria-label="Delete from this device" title="Delete from this device">${icon('trash', 18)}</button></div></div>`);
+    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="messagecontent"></div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="open-reactions" aria-label="React" title="React">${icon('smilePlus', 20)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 19)}</button><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 19)}</button></div><div class="reactiontray" aria-label="Choose a reaction" hidden><button data-action="reaction" data-reaction="&#128514;" aria-label="React with laughing face">&#128514;</button><button data-action="reaction" data-reaction="&#10084;&#65039;" aria-label="React with heart">&#10084;&#65039;</button><button data-action="reaction" data-reaction="&#128077;" aria-label="React with thumbs up">&#128077;</button><button data-action="reaction" data-reaction="&#128558;" aria-label="React with surprised face">&#128558;</button><button data-action="reaction" data-reaction="&#128546;" aria-label="React with crying face">&#128546;</button><button data-action="reaction" data-reaction="&#128293;" aria-label="React with fire">&#128293;</button></div></div>`);
     card.querySelector('.messagecontent').appendChild(content);
     const menu = card.querySelector('.messagemenu');
-    card.querySelector('.messagemore').onclick = (event) => { event.stopPropagation(); const opening = menu.hidden; closeMessageMenus(menu); menu.hidden = !opening; };
+    const tray = card.querySelector('.reactiontray');
+    card.querySelector('.messagemore').onclick = (event) => { event.stopPropagation(); const opening = menu.hidden; closeMessageMenus(); menu.hidden = !opening; tray.hidden = true; };
     menu.onclick = async (event) => {
         const action = event.target.closest?.('[data-action]')?.dataset.action; if (!action) return;
-        event.stopPropagation(); menu.hidden = true;
-        if (action === 'reply') { setReplyDraft(e); return; }
-        if (action === 'react' || action === 'love') {
-            const reaction = action === 'react' ? '👍' : '♥';
+        event.stopPropagation();
+        if (action === 'open-reactions') { menu.hidden = true; tray.hidden = false; return; }
+        menu.hidden = true; tray.hidden = true;
+        if (action === 'reaction') {
+            const reaction = event.target.closest('[data-reaction]').dataset.reaction;
             await updateLocalEntry(uid, e.localId, entry => { entry.reaction = reaction; });
-            // Older local history from before stable message IDs cannot be matched on
-            // the other device. New messages, including GIFs and Clip shares, carry
-            // their delivery ID and therefore update both participants.
             if (e.msgId) await sendReaction(uid, e.msgId, reaction);
             return;
         }
+        if (action === 'reply') { setReplyDraft(e); return; }
         if (action === 'save') await updateLocalEntry(uid, e.localId, entry => { entry.saved = !entry.saved; });
-        if (action === 'delete') await updateLocalEntry(uid, e.localId, (entry, history) => { history.splice(history.indexOf(entry), 1); });
     };
+    tray.onclick = menu.onclick;
     return card;
 };
 const textBubble = (uid, e) => {

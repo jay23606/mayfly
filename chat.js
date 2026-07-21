@@ -21,6 +21,7 @@ const pubCache = new Map();       // uid -> recipient public-key JWK
 let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
+let openUsername = 'friend';
 let threadBox = null, convBox = null;
 let setReplyDraft = () => {};
 // A realtime INSERT and a catch-up query can legitimately see the same row. Keep
@@ -340,6 +341,7 @@ export const openConversation = async (box, uid) => {
     let username = pubCache.has(uid) ? null : null;
     const { data: prof } = await db.profileById(uid);
     username = prof?.username || 'friend';
+    openUsername = username;
     if (prof?.pubkey) { try { pubCache.set(uid, JSON.parse(prof.pubkey)); } catch (e) {} }
     box.innerHTML = `<div class="thread">
         <div class="thead">
@@ -458,7 +460,7 @@ const updateLocalEntry = async (uid, localId, update) => {
 const messageCard = (uid, e, content) => {
     if (e.saved) content.classList.add('saved');
     if (e.reaction) content.appendChild(el(`<span class="localreaction">${esc(e.reaction)}</span>`));
-    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="messagecontent"></div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="open-reactions" aria-label="React" title="React">${icon('smilePlus', 20)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 19)}</button><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 19)}</button></div><div class="reactiontray" aria-label="Choose a reaction" hidden><button data-action="reaction" data-reaction="&#128514;" aria-label="React with laughing face">&#128514;</button><button data-action="reaction" data-reaction="&#10084;&#65039;" aria-label="React with heart">&#10084;&#65039;</button><button data-action="reaction" data-reaction="&#128077;" aria-label="React with thumbs up">&#128077;</button><button data-action="reaction" data-reaction="&#128558;" aria-label="React with surprised face">&#128558;</button><button data-action="reaction" data-reaction="&#128546;" aria-label="React with crying face">&#128546;</button><button data-action="reaction" data-reaction="&#128293;" aria-label="React with fire">&#128293;</button></div></div>`);
+    const card = el(`<div class="messagewrap ${e.me ? 'me' : 'them'}" data-local-id="${esc(e.localId)}"><div class="messagecontent"></div><button class="messagemore" aria-label="Message options" title="Message options">${icon('more', 18)}</button><div class="messagemenu" hidden><button data-action="open-reactions" aria-label="React" title="React">${icon('smilePlus', 20)}</button><button data-action="save" aria-label="${e.saved ? 'Unsave message' : 'Save message'}" title="${e.saved ? 'Unsave' : 'Save'}">${icon('bookmark', 19)}</button><button data-action="reply" aria-label="Reply" title="Reply">${icon('reply', 19)}</button><button data-action="delete" aria-label="Delete from this device" title="Delete from this device">${icon('trash', 19)}</button></div><div class="reactiontray" aria-label="Choose a reaction" hidden><button data-action="reaction" data-reaction="&#128514;" aria-label="React with laughing face">&#128514;</button><button data-action="reaction" data-reaction="&#10084;&#65039;" aria-label="React with heart">&#10084;&#65039;</button><button data-action="reaction" data-reaction="&#128077;" aria-label="React with thumbs up">&#128077;</button><button data-action="reaction" data-reaction="&#128558;" aria-label="React with surprised face">&#128558;</button><button data-action="reaction" data-reaction="&#128546;" aria-label="React with crying face">&#128546;</button><button data-action="reaction" data-reaction="&#128293;" aria-label="React with fire">&#128293;</button></div></div>`);
     card.querySelector('.messagecontent').appendChild(content);
     const menu = card.querySelector('.messagemenu');
     const tray = card.querySelector('.reactiontray');
@@ -476,13 +478,18 @@ const messageCard = (uid, e, content) => {
         }
         if (action === 'reply') { setReplyDraft(e); return; }
         if (action === 'save') await updateLocalEntry(uid, e.localId, entry => { entry.saved = !entry.saved; });
+        if (action === 'delete') await updateLocalEntry(uid, e.localId, (entry, history) => { history.splice(history.indexOf(entry), 1); });
     };
     tray.onclick = menu.onclick;
     return card;
 };
+const chatTime = (at) => new Date(Number(at) || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const textBubble = (uid, e) => {
     const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
-    return messageCard(uid, e, el(`<div class="b ${e.me ? 'me' : 'them'}">${reply}${esc(e.text)}</div>`));
+    const who = e.me ? 'Me' : openUsername;
+    const card = messageCard(uid, e, el(`<article class="b chattext ${e.me ? 'me' : 'them'}"><div class="chatmeta"><span class="chatsender">${esc(who)}</span><time class="chattime">${chatTime(e.at)}</time></div><div class="chatbody">${reply}${esc(e.text)}</div></article>`));
+    card.classList.add('textcard');
+    return card;
 };
 const appendBubble = (text, cls) => { const body = $('#tbody'); if (!body) return; const hint = $('.threadhint', body); if (hint) hint.remove(); body.appendChild(el(`<div class="b ${cls}">${esc(text)}</div>`)); body.scrollTop = body.scrollHeight; };
 const storyReplyBubble = (e) => {

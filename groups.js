@@ -29,7 +29,8 @@ export const clearAllGroupConversations = () => {
 
 const memberMap = (group) => { const m = {}; (group.mf_group_members || []).forEach(gm => { m[gm.user_id] = gm.profiles || {}; }); return m; };
 const gLine = (gp, html) => { if (!gp.node) return; const l = $('.chatlog', gp.node); if (!l) return; const line = el(html); l.appendChild(line); l.scrollTop = l.scrollHeight; return line; };
-const gText = (gp, name, text, cls) => gLine(gp, `<div class="b ${cls}">${cls === 'them' ? `<span class="gwho">${esc(name)}</span>` : ''}${esc(text)}</div>`);
+const groupTime = (at) => new Date(Number(at) || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const gText = (gp, name, text, cls, at = Date.now()) => gLine(gp, `<article class="b chattext ${cls}"><div class="chatmeta"><span class="chatsender">${esc(cls === 'me' ? 'Me' : (name || 'Someone'))}</span><time class="chattime">${groupTime(at)}</time></div><div class="chatbody">${esc(text)}</div></article>`);
 const gSys = (gp, text) => gLine(gp, `<div class="b sys">${esc(text)}</div>`);
 const setGroupName = (gp, name) => {
     gp.name = name;
@@ -48,7 +49,7 @@ const promptGroupName = async (group) => {
     group.name = name;
     return name;
 };
-const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, ...payload } }); } catch (e) {} };
+const bcast = (gp, payload) => { try { gp.ch.send({ type: 'broadcast', event: 'g', payload: { from: state.me.id, name: state.profile.username, at: Date.now(), ...payload } }); } catch (e) {} };
 const notifyGroup = (gp, body) => { if (!gp.node && browserNotificationsEnabled()) new Notification(gp.name || 'Group', { body }); };
 
 // ---- group P2P media (files, clips, inline Snaps, and timed view-once Snaps) ----
@@ -413,7 +414,7 @@ const openGroup = (group, container = app) => {
     gSys(gp, `${group.name || 'Group'} · ${Object.keys(members).length} members`);
     pending.forEach(item => {
         const cls = item.me ? 'me' : 'them';
-        if (item.text) gText(gp, item.name, item.text, 'them');
+        if (item.text) gText(gp, item.name, item.text, item.me ? 'me' : 'them', item.at);
         else if (item.media?.snap) groupSnapCard(gp, item.media, cls, item.name);
         else if (item.media) groupMediaBubble(gp, item.media, cls, item.name);
     });
@@ -422,7 +423,7 @@ const openGroup = (group, container = app) => {
     gp.ch = ch;
     ch.on('broadcast', { event: 'g' }, ({ payload }) => {
         if (!payload || payload.from === state.me.id) return;
-        if (payload.t === 'msg') gText(gp, payload.name, payload.text, 'them');
+        if (payload.t === 'msg') gText(gp, payload.name, payload.text, 'them', payload.at);
         else if (payload.t === 'gsnap-opened') markGroupSnapOpened(gp, payload.id);
         else if (payload.t === 'gname' && payload.groupName) {
             setGroupName(gp, payload.groupName);

@@ -230,12 +230,15 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .icon{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px;display:inline-flex;align-items:center;justify-content:center}
 .ic{display:block;flex:none}
 .icon.off{color:#ff3b5c}
-.chatlog{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:6px}
-.b{max-width:78%;padding:9px 13px;border-radius:16px;font-size:15px;word-wrap:break-word}
-.b.me{align-self:flex-start;background:var(--grad);color:#08080c;border-bottom-left-radius:5px}
-.b.them{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:5px}
-.b.sys{align-self:center;background:none;color:var(--muted);font-size:12px}
-.messagewrap{position:relative;align-self:flex-start;max-width:78%}.messagewrap .b{max-width:100%}.messagemore{position:absolute;top:50%;right:-29px;transform:translateY(-50%);display:grid;place-items:center;width:25px;height:25px;padding:0;border:0;border-radius:50%;background:var(--panel2);color:var(--muted);cursor:pointer;opacity:.55}.messagewrap:hover .messagemore,.messagewrap:focus-within .messagemore{opacity:1}.messagemenu{position:absolute;z-index:5;left:0;bottom:calc(100% + 7px);display:flex;width:max-content;max-width:calc(100vw - 44px);padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 8px 24px #0008}.messagemenu[hidden]{display:none}.messagemenu button{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--text);cursor:pointer}.messagemenu button:hover,.messagemenu button:focus-visible{background:var(--panel2);color:var(--accent2)}.replyquote{margin:-3px -4px 6px;padding:4px 6px;border-left:2px solid currentColor;background:#00000012;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.saved{box-shadow:inset 0 0 0 1px #ffffff66}.localreaction{display:block;width:max-content;margin:6px 0 -4px auto;padding:1px 5px;border-radius:999px;background:#ffffff55;font-size:13px}.replydraft{display:flex;align-items:center;gap:8px;padding:5px 12px;border-top:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--muted)}.replydraft[hidden]{display:none}.replydraft span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.replydraft button{border:0;border-radius:50%;width:24px;height:24px;background:var(--panel2);color:var(--text);font-size:18px;cursor:pointer}
+.chatlog{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 14px 20px;display:flex;flex-direction:column;gap:9px}
+/* Shared direct/group conversation language: blue is yours, charcoal is theirs.
+   The small tail keeps the friendly, lightweight Snapchat chat feel without
+   introducing a bright surface into Mayfly's dark theme. */
+.b{max-width:min(78%,460px);box-sizing:border-box;padding:10px 13px 11px;border-radius:19px;font-size:15px;line-height:1.34;word-wrap:break-word;box-shadow:0 1px 1px #0002}
+.b.me{align-self:flex-end;background:#1685ff;color:#fff;border-bottom-right-radius:6px}
+.b.them{align-self:flex-start;background:#29292f;color:var(--text);border:1px solid #ffffff0b;border-bottom-left-radius:6px}
+.b.sys{align-self:center;background:none;color:var(--muted);box-shadow:none;font-size:12px}
+.messagewrap{position:relative;align-self:flex-start;max-width:min(78%,460px)}.messagewrap.me{align-self:flex-end}.messagewrap .b{max-width:100%}.messagemore{position:absolute;top:50%;right:-29px;transform:translateY(-50%);display:grid;place-items:center;width:25px;height:25px;padding:0;border:0;border-radius:50%;background:var(--panel2);color:var(--muted);cursor:pointer;opacity:.55}.messagewrap.me .messagemore{right:auto;left:-29px}.messagewrap:hover .messagemore,.messagewrap:focus-within .messagemore{opacity:1}.messagemenu{position:absolute;z-index:5;left:0;bottom:calc(100% + 7px);display:flex;width:max-content;max-width:calc(100vw - 44px);padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 8px 24px #0008}.messagewrap.me .messagemenu{right:0;left:auto}.messagemenu[hidden]{display:none}.messagemenu button{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--text);cursor:pointer}.messagemenu button:hover,.messagemenu button:focus-visible{background:var(--panel2);color:var(--accent2)}.replyquote{margin:-3px -4px 6px;padding:4px 6px;border-left:2px solid currentColor;background:#00000012;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.saved{box-shadow:inset 0 0 0 1px #ffffff88}.localreaction{display:block;width:max-content;margin:6px 0 -4px auto;padding:1px 5px;border-radius:999px;background:#ffffff55;font-size:13px}.replydraft{display:flex;align-items:center;gap:8px;padding:5px 12px;border-top:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--muted)}.replydraft[hidden]{display:none}.replydraft span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.replydraft button{border:0;border-radius:50%;width:24px;height:24px;background:var(--panel2);color:var(--text);font-size:18px;cursor:pointer}
 .ctyping{min-height:16px;padding:0 14px 4px;color:var(--muted);font-size:12px}
 .chatin{display:flex;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none;background:var(--bg)}
 .chatin input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:11px 16px;outline:none;font-size:16px}
@@ -315,7 +318,7 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .gavatars{display:flex}
 .gavatars .gav{width:34px;height:34px;margin-left:-10px;border:2px solid var(--bg);font-size:13px}
 .gavatars .gav:first-child{margin-left:0}
-.gwho{display:block;font-size:11px;color:var(--accent2);margin-bottom:2px}
+.gwho{display:block;margin-bottom:3px;color:#a8caff;font-size:11px;font-weight:700;letter-spacing:.01em}
 .gvideos{display:none;gap:4px;padding:4px;background:#000}
 .chatview.group.incall .gvideos{display:grid}
 .gvideos[data-n="1"]{grid-template-columns:1fr}
@@ -372,7 +375,7 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .thead .who{flex:1;min-width:0}
 .thead .back{font-size:26px}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
-.tbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:6px}
+.tbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:16px 14px 20px;display:flex;flex-direction:column;gap:9px}
 .threadhint{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
 .snapcard{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
 .snapcard.photo{border-color:#ff3b5c;background:#ff3b5c18}

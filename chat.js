@@ -135,10 +135,25 @@ const replyFromPayload = (text, me = false, at = Date.now()) => {
 const reactionFromPayload = (text) => {
     try {
         const p = JSON.parse(text);
-        return p?.t === 'chat-reaction' && typeof p.targetId === 'string' && p.targetId.length <= 160 && ['👍', '♥'].includes(p.reaction)
+        return p?.t === 'chat-reaction' && typeof p.targetId === 'string' && p.targetId.length <= 160 && REACTION_VALUES.has(p.reaction)
             ? { targetId: p.targetId, reaction: p.reaction }
             : null;
     } catch (e) { return null; }
+};
+const REACTION_VALUES = new Set(['\u{1F44D}', '\u2665', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}']);
+const repairStoredReactions = (history) => {
+    let changed = false;
+    for (let i = history.length - 1; i >= 0; i--) {
+        const entry = history[i];
+        const reaction = entry?.kind === 'text' && !entry.me ? reactionFromPayload(entry.text) : null;
+        if (!reaction) continue;
+        const target = history.find(item => item.msgId === reaction.targetId);
+        if (target) target.reaction = reaction.reaction;
+        else pendingReactions.set(reaction.targetId, reaction.reaction);
+        history.splice(i, 1);
+        changed = true;
+    }
+    return changed;
 };
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
 const applyIncomingReaction = async (uid, targetId, reaction) => {
@@ -409,7 +424,13 @@ const closeMessageMenus = (except = null) => document.querySelectorAll('.message
 const renderThreadBody = async (uid, preserveScroll = false) => {
     const body = $('#tbody'); if (!body || openUid !== uid) return;
     const scrollTop = body.scrollTop;
-    const h = await histGet(uid);
+    let h = await histGet(uid);
+    // Versions before the emoji picker treated a valid reaction payload as a
+    // normal message. Repair those local entries without requiring deletion.
+    if (repairStoredReactions(h)) {
+        await histUpdate(uid, repairStoredReactions);
+        h = await histGet(uid);
+    }
     // Expire locally tracked receipts after their 24-hour delivery window.
     let dirty = false;
     const reconcile = (e) => {

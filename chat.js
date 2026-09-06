@@ -606,7 +606,21 @@ const openSnap = async (s, card) => {
             if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); }
         }
     } catch (e) { console.error('[mayfly] open snap', e); }
-    if (!full) { toast(s.delivery === 'live' ? 'Snap expired — sender went offline.' : 'Snap unavailable.'); return burnSnap(s, card, false); }
+    // Failing to fetch is not the same as being consumed, so the Snap stays put
+    // and the card goes back to being tappable. Burning here destroyed Snaps that
+    // were only briefly unreachable -- a live one whose sender had closed the tab
+    // is readable the moment they reopen it, and a relay one can fail on nothing
+    // worse than a dropped request. Either way the recipient got no second try,
+    // and the Snap was gone for good well before its 24h expiry. Expiry is swept
+    // separately; this path should leave the row alone.
+    if (!full) {
+        toast(s.delivery?.startsWith('live')
+            ? 'Sender is offline — try again when they are back.'
+            : 'Could not load this Snap — try again.');
+        card?.classList.remove('opening');
+        if (card) card.disabled = false;
+        return;
+    }
     const video = snapMime(s).startsWith('video/');
     // The default (timer 0) saves the opened media into this device's chat history,
     // then consumes the encrypted/live delivery. It will render inline like any file.
@@ -656,8 +670,10 @@ const openSnap = async (s, card) => {
     }
     ov.onclick = finish;
 };
-const burnSnap = async (s, card, wasOpened = true) => {
-    if (wasOpened) await db.markSnapOpened(s.id);
+// Only ever called once a Snap has actually been seen, so it always marks it
+// opened. The old wasOpened=false caller burned Snaps that failed to load.
+const burnSnap = async (s, card) => {
+    await db.markSnapOpened(s.id);
     await db.delSnap(s.id);
     // A shared relay stays available for its other recipients until expiry.
     if (s.delivery?.startsWith('relay') && !s.relay_id) sb.storage.from(SNAP_BUCKET).remove([s.id]);

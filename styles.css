@@ -53,13 +53,13 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 .clipreload{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:8px 12px;cursor:pointer;font:inherit;font-size:13px}
 .clipstage{position:relative;height:min(68vh,720px);min-height:420px;border-radius:24px;overflow:hidden;background:#000;touch-action:pan-x;isolation:isolate}
 .clipplayer{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
-.clipmeta{position:absolute;z-index:2;left:0;right:0;bottom:0;display:grid;gap:2px;padding:52px 16px 16px;background:linear-gradient(transparent,#000d)}
+.clipmeta{position:absolute;z-index:2;left:0;right:0;bottom:0;display:grid;gap:2px;padding:52px 16px 16px;background:linear-gradient(transparent,#000d);pointer-events:none}.clipmeta button{pointer-events:auto}
 .clipmeta b{font-size:16px}.clipmeta span,.clipmeta small{color:#ddd;font-size:13px}.clipmeta small{color:#aaa}
 .clipchannel,.clipfollow,.clipmini{border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0}.clipchannel{text-decoration:underline;text-underline-offset:3px}.clipfollow{margin-left:9px;color:var(--accent2);font-size:12px}.clipactions{display:flex;gap:8px;margin-top:3px}.clipmini{border:1px solid #ffffff44;border-radius:999px;padding:3px 8px;color:#fff;font-size:12px}.clipmini.on{background:var(--grad);border-color:transparent;color:#08080c}.clipnote,.cliphint{text-align:center;padding:6px 4px;margin:0;color:var(--muted);font-size:12px}.cliphint{color:var(--accent2)}
 .clipbubble{max-width:min(330px,82vw);padding:8px}.clipembed{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#000;margin:4px 0 7px}
 .clipcaption{margin-top:8px;padding-top:8px;border-top:1px solid #ffffff22;white-space:pre-wrap}
-.clipcontrols{position:absolute;z-index:3;right:12px;bottom:88px;display:grid;gap:8px}.clipprevious,.clipnext{font-size:34px;font-weight:400}
-.clipcontrol{border:1px solid #ffffff44;border-radius:999px;background:#000a;color:#fff;min-width:48px;min-height:48px;padding:8px 12px;font:inherit;font-size:24px;font-weight:700;line-height:1;cursor:pointer}
+.clipcontrols{position:absolute;z-index:3;left:12px;bottom:88px;display:grid;gap:8px;pointer-events:none}.clipprevious,.clipnext{font-size:34px;font-weight:400}
+.clipcontrol{border:1px solid #ffffff44;border-radius:999px;background:#000a;color:#fff;min-width:48px;min-height:48px;padding:8px 12px;font:inherit;font-size:24px;font-weight:700;line-height:1;cursor:pointer;pointer-events:auto}
 .clipshare{position:fixed;z-index:100;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:16px;background:#0009}
 .clipsharecard{width:min(560px,100%);max-height:75vh;overflow:auto;border:1px solid var(--line);border-radius:24px;background:var(--panel);padding:16px}
 .clipsharehead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}.clipsharehead b,.clipsharehead span{display:block}.clipsharehead span{color:var(--muted);font-size:13px;margin-top:2px}

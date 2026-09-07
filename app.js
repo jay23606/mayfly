@@ -144,9 +144,8 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         drawFiltered(c.getContext('2d'), v, activeFilter);
         return c.toDataURL('image/jpeg', 0.5);
     };
-    let holdTimer = null, recorder = null, maxRecordTimer = null, longPress = false;
+    let holdTimer = null, recorder = null, longPress = false;
     const stopRecording = () => {
-        clearTimeout(maxRecordTimer);
         if (recorder?.state === 'recording') recorder.stop();
     };
     const startRecording = () => {
@@ -173,7 +172,6 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         };
         recorder.start(250);
         shoot.classList.add('recording');
-        maxRecordTimer = setTimeout(stopRecording, 10000);
     };
     shoot.onpointerdown = (e) => {
         e.preventDefault(); shoot.setPointerCapture?.(e.pointerId); longPress = false;

@@ -75,8 +75,8 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
 const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
     const ev = emitter(); const pc = new RTCPeerConnection(ICE);
     let remoteSet = false, closed = false, remoteStream = null, established = false;
-    let lastState = { connection: pc.connectionState, ice: pc.iceConnectionState }; const pend = [];
-    const fireClose = () => { if (closed) return; closed = true; conns.delete(cid); ev.emit('close'); };
+    let lastState = { connection: pc.connectionState, ice: pc.iceConnectionState }, discT = null, restartT = null, iceRestarts = 0; const pend = [];
+    const fireClose = () => { if (closed) return; closed = true; clearTimeout(discT); clearTimeout(restartT); conns.delete(cid); ev.emit('close'); };
     const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
     const api = {
         peer: remote, metadata,
@@ -108,6 +108,19 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
             signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription });
             return true;
         },
+        // Only the caller restarts ICE, avoiding competing offers when a network
+        // briefly changes (for example Wi-Fi to cellular). The other peer already
+        // handles a subsequent offer as a normal renegotiation.
+        restartIce: async () => {
+            if (!initiator || !established || iceRestarts >= 1 || pc.signalingState !== 'stable') return false;
+            iceRestarts++;
+            try {
+                pc.restartIce?.();
+                await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
+                signalSend(remote, { cid, kind: 'media', sdp: pc.localDescription });
+                return true;
+            } catch (e) { return false; }
+        },
         close() { try { pc.close(); } catch (e) {} conns.delete(cid); },
     };
     pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'media', ice: e.candidate }); };
@@ -123,13 +136,18 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
         lastState = { connection: pc.connectionState, ice: pc.iceConnectionState };
         ev.emit('state', lastState);
     };
-    let discT = null;
     pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         emitState();
-        if (s === 'connected') { clearTimeout(discT); discT = null; }
-        else if (s === 'disconnected') { clearTimeout(discT); discT = setTimeout(fireClose, 8000); }
-        else if (s === 'failed' || s === 'closed') { clearTimeout(discT); fireClose(); }
+        if (s === 'connected') {
+            clearTimeout(discT); clearTimeout(restartT); discT = restartT = null; iceRestarts = 0;
+        } else if (s === 'disconnected' || s === 'failed') {
+            // Give an interrupted call time to recover, then try one ICE restart
+            // before declaring it dead. A failed direct path still needs TURN for
+            // networks where no peer-to-peer route exists.
+            if (!restartT) restartT = setTimeout(() => { restartT = null; api.restartIce(); }, s === 'failed' ? 0 : 2000);
+            if (!discT) discT = setTimeout(fireClose, 20000);
+        } else if (s === 'closed') fireClose();
     };
     pc.oniceconnectionstatechange = emitState;
     if (initiator) {

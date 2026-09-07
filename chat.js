@@ -966,7 +966,7 @@ const wireCallMedia = (c) => {
             return;
         }
         if (connection === 'disconnected' || ice === 'disconnected') setStat('Reconnecting…');
-        if (connection === 'failed' || ice === 'failed') toast('Call failed — the network could not establish a direct connection.');
+        if (connection === 'failed' || ice === 'failed') setStat('Reconnecting…');
     });
     c.on('close', endCall); c.on('error', endCall);
 };

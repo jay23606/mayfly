@@ -48,7 +48,15 @@ const renderClip = () => {
     const meta = el(`<div class="clipmeta"><b>${esc(title)}</b><span><button class="clipchannel" title="Show this channel">${esc(decodeTitle(clip.channel || 'YouTube'))}</button><button class="clipfollow" title="Follow channel">${prefs.follows[clip.channelId] ? 'Following' : '+ Follow'}</button></span><div class="clipactions"><button class="clipmini ${prefs.likes[key] ? 'on' : ''}" title="Like">♥</button><button class="clipmini ${prefs.saved[key] ? 'on' : ''}" title="Save">★</button><button class="clipmini" title="${captionsOn ? 'Turn captions off' : 'Request captions'}">CC</button></div><small>${index + 1}${exhausted ? ` / ${feed.length}` : ''}</small></div>`);
     meta.querySelector('.clipchannel').onclick = () => { if (!clip.channelId) return toast('Channel details are unavailable for this clip.'); mode = 'channel'; channelId = clip.channelId; query = clip.channel || 'Channel'; startFeed(); };
     meta.querySelector('.clipfollow').onclick = () => toggleFollow(clip); meta.querySelectorAll('.clipmini')[0].onclick = () => toggleLiked(clip); meta.querySelectorAll('.clipmini')[1].onclick = () => toggleSaved(clip); meta.querySelectorAll('.clipmini')[2].onclick = () => { captionsOn = !captionsOn; prefs.captions = captionsOn; savePrefs(); renderClip(); };
-    const controls = el(`<div class="clipcontrols"><button class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">⛶</button><button class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">⤴</button></div>`);
+    const controls = el(`<div class="clipcontrols"><button type="button" class="clipcontrol clipprevious" aria-label="Previous clip" title="Previous clip">‹</button><button type="button" class="clipcontrol clipnext" aria-label="Skip to next clip" title="Skip to next clip">›</button><button type="button" class="clipcontrol clipaudio" aria-label="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}" title="${soundOn ? 'Exit fullscreen and mute' : 'Fullscreen with sound'}">⛶</button><button type="button" class="clipcontrol clipsharebtn" aria-label="Share clip" title="Share clip">⤴</button></div>`);
+    const navigate = (delta) => async (event) => { event.preventDefault(); event.stopPropagation(); await move(delta); };
+    const isolateControlPress = (event) => event.stopPropagation();
+    controls.querySelectorAll('button').forEach((button) => {
+        button.addEventListener('pointerdown', isolateControlPress);
+        button.addEventListener('touchstart', isolateControlPress, { passive: true });
+    });
+    controls.querySelector('.clipprevious').onclick = navigate(-1);
+    controls.querySelector('.clipnext').onclick = navigate(1);
     controls.querySelector('.clipaudio').onclick = async () => { soundOn = !soundOn; if (soundOn) await enterClipFullscreen(); else await leaveClipFullscreen(); renderClip(); };
     controls.querySelector('.clipsharebtn').onclick = shareClip; stage.append(frame, meta, controls); prefetchNext();
 };

@@ -651,14 +651,32 @@ const openSnap = async (s, card) => {
     const media = video ? `<video src="${safeMediaUrl(full)}" autoplay muted controls playsinline></video>` : `<img src="${safeMediaUrl(full)}" alt="snap">`;
     const ov = el(`<div class="player">${media}${s.caption ? `<div class="pcap">${esc(s.caption)}</div>` : ''}<div class="pname">${esc(u.username || '')}</div><div class="pbar"><i></i></div></div>`);
     document.body.appendChild(ov);
-    requestAnimationFrame(() => { const bar = $('.pbar i', ov); bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); });
-    let done = false;
-    const finish = async () => { if (done) return; done = true; clearTimeout(t); ov.remove(); if (full.startsWith('blob:')) URL.revokeObjectURL(full); await burnSnap(s, card); };
-    const t = setTimeout(finish, s.timer * 1000);
-    if (video) {
+    let done = false, viewing = false, t = null, loadTimer = null;
+    const release = () => { if (full.startsWith('blob:')) URL.revokeObjectURL(full); };
+    const fail = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(t); clearTimeout(loadTimer);
+        ov.remove(); release();
+        toast('This Snap could not start — try again.');
+        card?.classList.remove('opening');
+        if (card) card.disabled = false;
+    };
+    const finish = async () => {
+        if (done || !viewing) return;
+        done = true;
+        clearTimeout(t); clearTimeout(loadTimer);
+        ov.remove(); release();
+        await burnSnap(s, card);
+    };
+    const startViewing = () => {
+        if (done || viewing) return;
+        viewing = true;
+        clearTimeout(loadTimer);
+        requestAnimationFrame(() => { const bar = $('.pbar i', ov); if (bar) { bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); } });
+        t = setTimeout(finish, s.timer * 1000);
+        if (!video) return;
         const v = $('video', ov);
-        v.onended = finish;
-        v.onclick = (e) => e.stopPropagation();
         v.play().then(() => {
             v.muted = false;
             return v.play();
@@ -667,8 +685,26 @@ const openSnap = async (s, card) => {
             v.muted = true;
             v.play().catch(() => {});
         });
+    };
+    // Do not burn a timed Snap while its media is still loading. This matters most
+    // for video: a slow decode or a transient P2P hiccup should leave it available
+    // to retry rather than consume it unseen.
+    loadTimer = setTimeout(fail, 30000);
+    if (video) {
+        const v = $('video', ov);
+        v.preload = 'auto';
+        v.onended = finish;
+        v.onloadeddata = startViewing;
+        v.onerror = fail;
+        v.onclick = (e) => e.stopPropagation();
+        if (v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) startViewing();
+    } else {
+        const im = $('img', ov);
+        im.onload = startViewing;
+        im.onerror = fail;
+        if (im.complete && im.naturalWidth) startViewing();
     }
-    ov.onclick = finish;
+    ov.onclick = () => { if (viewing) finish(); };
 };
 // Only ever called once a Snap has actually been seen, so it always marks it
 // opened. The old wasOpened=false caller burned Snaps that failed to load.

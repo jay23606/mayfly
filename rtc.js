@@ -193,24 +193,60 @@ const startRtc = (dmHandler, callHandler, groupDataHandler) => new Promise((reso
     signalCh.subscribe((status) => { if (status === 'SUBSCRIBED') resolve(); });
 });
 
-// Pull a snap/story's full image from the (online) author's browser. Resolves to a
-// blob: URL, or null if they went offline / didn't have it.
-const fetchSnap = (id, authorId) => new Promise((resolve) => {
-    if (fullCache.has(id)) return resolve(fullCache.get(id));
-    if (!authorId) return resolve(null);
-    let done = false, mime = 'image/jpeg'; const parts = [];
-    const finish = (v) => { if (done) return; done = true; if (v) fullCache.set(id, v); try { c.close(); } catch (e) {} resolve(v); };
+// Pull a snap/story's full image from the (online) author's browser. A video can
+// take substantially longer than a photo, so the timeout is reset by every chunk
+// of progress rather than expiring after one fixed transfer-wide deadline.
+const fetchSnapOnce = (id, authorId) => new Promise((resolve) => {
+    let done = false, mime = 'image/jpeg', expectedBytes = 0, receivedBytes = 0, sawDone = false, timer = null;
+    const parts = [];
     const c = peer.connect(authorId);
-    const timer = setTimeout(() => finish(null), 20000);
+    const armTimeout = (ms = 30000) => { clearTimeout(timer); timer = setTimeout(() => finish(null), ms); };
+    const finish = (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { c.close(); } catch (e) {}
+        resolve(value);
+    };
+    const completeIfReady = () => {
+        if (sawDone && (!expectedBytes || receivedBytes >= expectedBytes)) {
+            finish(URL.createObjectURL(new Blob(parts, { type: mime })));
+        }
+    };
+    armTimeout(); // Covers signaling and opening the data channel.
     c.on('open', () => c.send({ type: 'want', id }));
     c.on('data', (d) => {
         if (!d || d.id !== id) return;
-        if (d.type === 'miss') { clearTimeout(timer); return finish(null); }
-        if (d.type === 'meta') { mime = d.mime || 'image/jpeg'; return; }
-        if (d.type === 'done') { clearTimeout(timer); return finish(URL.createObjectURL(new Blob(parts, { type: mime }))); }
+        if (d.type === 'miss') return finish(null);
+        if (d.type === 'meta') {
+            mime = d.mime || 'image/jpeg';
+            expectedBytes = Math.max(0, Number(d.bytes) || 0);
+            return armTimeout();
+        }
+        if (d.type === 'done') { sawDone = true; completeIfReady(); }
     });
-    c.on('chunk', (ab) => parts.push(ab));
-    c.on('close', () => { clearTimeout(timer); finish(null); });
+    c.on('chunk', (ab) => {
+        if (!ab) return;
+        parts.push(ab);
+        receivedBytes += ab.byteLength || 0;
+        armTimeout();
+        completeIfReady();
+    });
+    c.on('close', () => finish(null));
 });
+
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const fetchSnap = async (id, authorId) => {
+    if (fullCache.has(id)) return fullCache.get(id);
+    if (!authorId) return null;
+    // A WebRTC data channel can occasionally close during ICE negotiation. Retry
+    // once automatically before making the person tap the Snap again.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const full = await fetchSnapOnce(id, authorId);
+        if (full) { fullCache.set(id, full); return full; }
+        if (attempt === 0) await wait(350);
+    }
+    return null;
+};
 
 export { peer, startRtc, fetchSnap };

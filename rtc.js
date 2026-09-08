@@ -21,13 +21,13 @@ const sendBinary = async (dc, buf) => { for (let o = 0; o < buf.byteLength; o +=
 let signalCh = null;
 let onDataConn = null, onMediaConn = null;
 const conns = new Map();
-const signalSend = (to, msg) => { try { signalCh && signalCh.send({ type: 'broadcast', event: 'sig', payload: { to, from: state.me.id, ...msg } }); } catch (e) {} };
+const signalSend = (to, msg) => { try { signalCh && signalCh.send({ type: 'broadcast', event: 'sig', payload: { to, from: state.me.id, from_device: state.deviceId, ...msg } }); } catch (e) {} };
 const emitter = () => { const L = {}; return {
     on(ev, fn) { (L[ev] || (L[ev] = [])).push(fn); return this; },
     emit(ev, ...a) { (L[ev] || []).forEach(f => f(...a)); },
 }; };
 
-const makeDataConn = (remote, cid, initiator, metadata) => {
+const makeDataConn = (remote, cid, initiator, metadata, targetDeviceId = null) => {
     const ev = emitter(); const pc = new RTCPeerConnection(ICE);
     let dc, remoteSet = false, closed = false; const pend = [];
     const fireClose = () => { if (closed) return; closed = true; api.open = false; conns.delete(cid); ev.emit('close'); };
@@ -48,7 +48,7 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
         };
         dc.onclose = fireClose;
     };
-    pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'data', ice: e.candidate }); };
+    pc.onicecandidate = (e) => { if (e.candidate) signalSend(remote, { cid, kind: 'data', to_device: targetDeviceId, ice: e.candidate }); };
     let discT = null;
     pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
@@ -59,13 +59,13 @@ const makeDataConn = (remote, cid, initiator, metadata) => {
     if (initiator) {
         wireDC(pc.createDataChannel('d'));
         pc.createOffer().then(o => pc.setLocalDescription(o))
-          .then(() => signalSend(remote, { cid, kind: 'data', sdp: pc.localDescription, metadata }));
+          .then(() => signalSend(remote, { cid, kind: 'data', to_device: targetDeviceId, sdp: pc.localDescription, metadata }));
     } else { pc.ondatachannel = (e) => wireDC(e.channel); }
     conns.set(cid, { handleSignal: async (msg) => {
         if (msg.sdp) {
             await pc.setRemoteDescription(msg.sdp); remoteSet = true;
             pend.splice(0).forEach(c => pc.addIceCandidate(c).catch(() => {}));
-            if (msg.sdp.type === 'offer') { await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'data', sdp: pc.localDescription }); }
+            if (msg.sdp.type === 'offer') { await pc.setLocalDescription(await pc.createAnswer()); signalSend(remote, { cid, kind: 'data', to_device: targetDeviceId, sdp: pc.localDescription }); }
         } else if (msg.ice) { remoteSet ? pc.addIceCandidate(msg.ice).catch(() => {}) : pend.push(msg.ice); }
     } });
     return api;
@@ -170,16 +170,17 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
 };
 
 const peer = {
-    connect: (userId, opts = {}) => makeDataConn(userId, rand(), true, opts.metadata),
+    connect: (userId, opts = {}) => makeDataConn(userId, rand(), true, opts.metadata, opts.targetDeviceId),
     call: (userId, stream, opts = {}) => makeMediaConn(userId, rand(), true, opts.metadata, stream),
 };
 
 const onSignal = (p) => {
     if (!p || p.to !== state.me.id) return;
+    if (p.to_device && p.to_device !== state.deviceId) return;
     let entry = conns.get(p.cid);
     if (!entry) {
         if (!p.sdp || p.sdp.type !== 'offer') return;   // stray candidate/answer for a dead conn
-        if (p.kind === 'data') { const c = makeDataConn(p.from, p.cid, false, p.metadata); onDataConn && onDataConn(c); }
+        if (p.kind === 'data') { const c = makeDataConn(p.from, p.cid, false, p.metadata, p.from_device || null); onDataConn && onDataConn(c); }
         else if (p.kind === 'media') { const c = makeMediaConn(p.from, p.cid, false, p.metadata); onMediaConn && onMediaConn(c); }
         entry = conns.get(p.cid);
     }
@@ -214,10 +215,10 @@ const startRtc = (dmHandler, callHandler, groupDataHandler) => new Promise((reso
 // Pull a snap/story's full image from the (online) author's browser. A video can
 // take substantially longer than a photo, so the timeout is reset by every chunk
 // of progress rather than expiring after one fixed transfer-wide deadline.
-const fetchSnapOnce = (id, authorId) => new Promise((resolve) => {
+const fetchSnapOnce = (id, authorId, authorDeviceId = null) => new Promise((resolve) => {
     let done = false, mime = 'image/jpeg', expectedBytes = 0, receivedBytes = 0, sawDone = false, timer = null;
     const parts = [];
-    const c = peer.connect(authorId);
+    const c = peer.connect(authorId, { targetDeviceId: authorDeviceId });
     const armTimeout = (ms = 30000) => { clearTimeout(timer); timer = setTimeout(() => finish(null), ms); };
     const finish = (value) => {
         if (done) return;
@@ -254,13 +255,13 @@ const fetchSnapOnce = (id, authorId) => new Promise((resolve) => {
 });
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-const fetchSnap = async (id, authorId) => {
+const fetchSnap = async (id, authorId, authorDeviceId = null) => {
     if (fullCache.has(id)) return fullCache.get(id);
     if (!authorId) return null;
     // A WebRTC data channel can occasionally close during ICE negotiation. Retry
     // once automatically before making the person tap the Snap again.
     for (let attempt = 0; attempt < 2; attempt++) {
-        const full = await fetchSnapOnce(id, authorId);
+        const full = await fetchSnapOnce(id, authorId, authorDeviceId);
         if (full) { fullCache.set(id, full); return full; }
         if (attempt === 0) await wait(350);
     }

@@ -185,7 +185,7 @@ const bytesToDataUrl = (bytes, mime = 'image/jpeg') => new Promise((res) => {
 });
 
 // ===================== auth / session state =====================
-const state = { me: null, profile: null, priv: null };   // priv = this device's ECDH private key
+const state = { me: null, profile: null, priv: null, deviceId: null };   // priv = this device's ECDH private key
 const presenceUsers = {};                                 // user_id -> { username }
 const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];

@@ -391,12 +391,16 @@ const sendLiveSnap = async (shot, u, caption, secs) => {
     const kind = shot.mime?.startsWith('video/') ? 'video' : 'photo';
     try {
         if (!isOnline(u.id)) return false;
-        const id = uuid();
-        await idb.set('snap:' + id, shot.rawBlob || shot.full);
-        const { error } = await db.addSnap({ ...base, id, delivery: `live:${encodeURIComponent(shot.mime || 'image/jpeg')}` });
-        if (error) { await idb.del('snap:' + id); throw error; }
+        const { data } = await db.devicesForUser(u.id);
+        const devices = (data || []).length ? data : [{ id: null }];
+        const logicalId = uuid(), ids = devices.map(() => uuid());
+        await Promise.all(ids.map(id => idb.set('snap:' + id, shot.rawBlob || shot.full)));
+        const rows = devices.map((device, i) => ({ ...base, id: ids[i], logical_id: logicalId, sender_device_id: state.deviceId, recipient_device_id: device.id, delivery: `live:${encodeURIComponent(shot.mime || 'image/jpeg')}` }));
+        const results = await Promise.all(rows.map(row => db.addSnap(row)));
+        const failed = results.find(result => result.error);
+        if (failed) { await Promise.all(ids.map(id => idb.del('snap:' + id))); throw failed.error; }
         db.bumpStreak(u.id).then(() => {}, () => {});
-        return { id, kind };
+        return { id: ids[0], kind };
     } catch (e) { console.error('[mayfly] send failed', e); return false; }
 };
 
@@ -404,11 +408,16 @@ const sendLiveSnap = async (shot, u, caption, secs) => {
 const sendSharedRelay = async (shot, targets, caption, secs) => {
     const result = { sent: [], blocked: 0, toomany: 0 };
     const checked = await Promise.all(targets.map(async (u) => {
-        if (!u.pubkey) return { u, ok: false };
         const { count } = await db.pendingRelayTo(u.id);
         if (count && count >= 1) return { u, ok: false, blocked: true };
-        try { return { u, ok: true, pubkey: JSON.parse(u.pubkey) }; }
-        catch (e) { return { u, ok: false }; }
+        const { data } = await db.devicesForUser(u.id);
+        const devices = (data || []).map(device => {
+            try { return { id: device.id, pubkey: JSON.parse(device.pubkey) }; } catch (e) { return null; }
+        }).filter(Boolean);
+        // Legacy recipients retain the account-key envelope until they register
+        // their first device with the multi-device release.
+        if (!devices.length) try { if (u.pubkey) devices.push({ id: null, pubkey: JSON.parse(u.pubkey) }); } catch (e) {}
+        return { u, ok: devices.length > 0, devices };
     }));
     const recipients = checked.filter(item => item.ok);
     result.blocked = checked.filter(item => item.blocked).length;
@@ -430,21 +439,26 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
         const upload = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ciphertext]), { contentType: 'application/octet-stream', upsert: false });
         if (upload.error) throw upload.error;
 
-        const rows = await Promise.all(recipients.map(async ({ u, pubkey }) => {
-            try {
-                const key = await wrapSharedRelayKey(pubkey, rawKey);
+        const rows = await Promise.all(recipients.flatMap(({ u, devices }) => {
+            const logicalId = uuid();
+            return devices.map(async (device) => {
+                try {
+                const key = await wrapSharedRelayKey(device.pubkey, rawKey);
                 const snapId = uuid();
                 const { error } = await db.addSnap({
                     id: snapId, sender_id: state.me.id, recipient_id: u.id,
                     preview: shot.preview, caption, w: shot.w, h: shot.h, timer: secs,
                     delivery: `relay-shared:${encodeURIComponent(mime)}`,
-                    relay_id: id, wrapped_key: key.wrapped_key, iv: key.iv, eph_pub: key.eph_pub, expires_at,
+                    relay_id: id, logical_id: logicalId, sender_device_id: state.deviceId, recipient_device_id: device.id,
+                    wrapped_key: key.wrapped_key, iv: key.iv, eph_pub: key.eph_pub, expires_at,
                 });
                 if (error) throw error;
                 return { uid: u.id, id: snapId, kind: 'photo' };
             } catch (e) { console.error('[mayfly] shared relay recipient failed', e); return null; }
+            });
         }));
-        result.sent = rows.filter(Boolean);
+        const sentRows = rows.filter(Boolean), seen = new Set();
+        result.sent = sentRows.filter(row => !seen.has(row.uid) && seen.add(row.uid));
         result.sent.forEach(({ uid }) => db.bumpStreak(uid).then(() => {}, () => {}));
         if (!result.sent.length) {
             await sb.storage.from(SNAP_BUCKET).remove([id]);
@@ -998,7 +1012,7 @@ const startRealtime = () => {
     sb.channel('mayfly-messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_messages', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onMessageInsert(payload.new))
       // my sent message was ingested by the recipient (row deleted) → blue "Delivered" receipt
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.id); })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.message_id || payload.old.id); })
       // The first inbox query can finish before this websocket is subscribed. A
       // second catch-up here closes that race, which is most visible on mobile.
       .subscribe((status) => { if (status === 'SUBSCRIBED') syncMessages().catch(() => {}); });
@@ -1086,13 +1100,15 @@ const enterApp = async (session) => {
     bootedFor = session.user.id;
     state.me = session.user;
     // this device's E2E keypair (private stays local)
-    const { priv, pubJwk } = await loadOrCreateKeys();
-    state.priv = priv;
-    // self-heal the mf_profiles row + keep our published public key current
+    const { priv, pubJwk, deviceId } = await loadOrCreateKeys();
+    state.priv = priv; state.deviceId = deviceId;
+    // Profiles retain a legacy public key for older installs. Current installs
+    // publish their key per device and never overwrite another device's key.
     const { data: prof } = await db.myProfile();
     const username = prof?.username || state.me.user_metadata?.username || ('user_' + state.me.id.slice(0, 8));
-    const { data: saved } = await db.upsertProfile({ username, pubkey: JSON.stringify(pubJwk), avatar: prof?.avatar || '' });
+    const { data: saved } = await db.upsertProfile({ username, pubkey: prof?.pubkey || JSON.stringify(pubJwk), avatar: prof?.avatar || '' });
     state.profile = saved || prof || { username };
+    await db.registerDevice(pubJwk, navigator.userAgent.slice(0, 120));
     await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c), onIncomingGroupData);
     startPresence();
     startRealtime();

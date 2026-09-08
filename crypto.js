@@ -16,10 +16,12 @@ const b64 = {
 };
 
 // Load this device's keypair, generating + persisting it on first run.
-// Returns { priv: CryptoKey, pubJwk } — pubJwk is published to mf_profiles.pubkey.
+// Returns a persistent local device identity alongside its keypair. The private key
+// never leaves this browser; only the public key is registered in mf_devices.
 export async function loadOrCreateKeys() {
     let privJwk = await idb.get('mykey:priv');
     let pubJwk  = await idb.get('mykey:pub');
+    let deviceId = await idb.get('mydevice:id');
     if (!privJwk || !pubJwk) {
         const kp = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);
         privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
@@ -27,8 +29,9 @@ export async function loadOrCreateKeys() {
         await idb.set('mykey:priv', privJwk);
         await idb.set('mykey:pub', pubJwk);
     }
+    if (!deviceId) { deviceId = crypto.randomUUID(); await idb.set('mydevice:id', deviceId); }
     const priv = await crypto.subtle.importKey('jwk', privJwk, ECDH, false, ['deriveKey']);
-    return { priv, pubJwk };
+    return { priv, pubJwk, deviceId };
 }
 
 // Encrypt `bytes` for a recipient, given their published public-key JWK.

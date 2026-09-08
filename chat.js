@@ -17,7 +17,7 @@ import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from '
 const MSG_MAX = 2000;             // max characters per chat message
 const MSG_PENDING_CAP = 10;       // max undelivered messages queued to one offline recipient
 const conns = new Map();          // uid -> live P2P data conn (for media/voice/typing)
-const pubCache = new Map();       // uid -> recipient public-key JWK
+const pubCache = new Map();       // uid -> recipient device public keys
 let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
@@ -97,11 +97,18 @@ const lastLine = (h) => {
         : m.kind === 'media' ? (m.me ? 'You: ' : '') + '📎 ' + (m.name || m.mediaKind || 'attachment') : '';
 };
 
-const pubOf = async (uid) => {
+const deviceKeysOf = async (uid) => {
     if (pubCache.has(uid)) return pubCache.get(uid);
-    const { data } = await db.profileById(uid);
-    let jwk = null; try { jwk = data?.pubkey ? JSON.parse(data.pubkey) : null; } catch (e) {}
-    pubCache.set(uid, jwk); return jwk;
+    const { data } = await db.devicesForUser(uid);
+    const devices = (data || []).map(device => {
+        try { return { id: device.id, pubkey: JSON.parse(device.pubkey) }; } catch (e) { return null; }
+    }).filter(Boolean);
+    // Keep a legacy delivery fallback for someone who has not upgraded yet.
+    if (!devices.length) {
+        const { data: profile } = await db.profileById(uid);
+        try { if (profile?.pubkey) devices.push({ id: null, pubkey: JSON.parse(profile.pubkey) }); } catch (e) {}
+    }
+    pubCache.set(uid, devices); return devices;
 };
 
 // ---- pull any messages that arrived while we were offline ----
@@ -184,7 +191,7 @@ const ingestMessage = async (row) => {
     const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || gifFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
     // Both people need the same stable identifier to attach a reaction to a shared
     // item. The delivery row ID is available to the recipient before it is deleted.
-    entry.msgId = row.id;
+    entry.msgId = row.message_id || row.id;
     const queuedReaction = pendingReactions.get(entry.msgId);
     if (queuedReaction) { entry.reaction = queuedReaction; pendingReactions.delete(entry.msgId); }
     await histPush(row.sender_id, entry);
@@ -211,6 +218,7 @@ const receiveMessage = (row) => {
 // realtime INSERT handler (from app.js)
 export const onMessageInsert = (row) => {
     if (row.recipient_id !== state.me.id) return;
+    if (row.recipient_device_id && row.recipient_device_id !== state.deviceId) return;
     receiveMessage(row).then(() => {
         if (convBox?.isConnected) renderConvs(convBox, openUid);
         onChange();
@@ -220,6 +228,7 @@ export const onMessageInsert = (row) => {
 // ---- a snap arrived for me / I sent one ----
 export const onSnapInsert = async (row) => {
     if (row.recipient_id !== state.me.id) return;
+    if (row.recipient_device_id && row.recipient_device_id !== state.deviceId) return;
     (inboxByUser[row.sender_id] = inboxByUser[row.sender_id] || []).unshift(row);
     if (!row.delivered_at) db.markSnapDelivered(row.id).then(() => {}, () => {});
     if (openUid === row.sender_id && threadBox) renderThreadBody(row.sender_id);
@@ -546,10 +555,13 @@ export const sendText = async (uid, username, text, localEntry = null, options =
         if (openUid === uid) appendEntry(entry);
         if (convBox) renderConvs(convBox, uid);
     }
-    const pub = await pubOf(uid);
-    if (!pub) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
-    const enc = await encryptText(pub, text);
-    const { error } = await db.sendMessage({ id: msgId, sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
+    const devices = await deviceKeysOf(uid);
+    if (!devices.length) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
+    const rows = await Promise.all(devices.map(async (device) => {
+        const enc = await encryptText(device.pubkey, text);
+        return { id: crypto.randomUUID(), message_id: msgId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body };
+    }));
+    const { error } = await db.sendMessages(rows);
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
     if (countTowardStreak) db.bumpStreak(uid).then(() => {}, () => {});
     return true;
@@ -593,7 +605,7 @@ const openSnap = async (s, card) => {
     if (card) { card.disabled = true; card.classList.add('opening'); }
     let full = null;
     try {
-        if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id);
+        if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id, s.sender_device_id);
         else if (s.relay_id) {
             const { data: relay } = await db.relayPayload(s.relay_id);
             const dl = relay && await sb.storage.from(SNAP_BUCKET).download(s.relay_id);
@@ -620,6 +632,15 @@ const openSnap = async (s, card) => {
         card?.classList.remove('opening');
         if (card) card.disabled = false;
         return;
+    }
+    if (s.logical_id) {
+        const { data: claimed, error } = await db.claimSnap(s.id);
+        if (error || !claimed) {
+            if (full.startsWith('blob:')) URL.revokeObjectURL(full);
+            toast('This Snap was opened on another device.');
+            card?.classList.remove('opening'); if (card) card.disabled = false;
+            return;
+        }
     }
     const video = snapMime(s).startsWith('video/');
     // The default (timer 0) saves the opened media into this device's chat history,

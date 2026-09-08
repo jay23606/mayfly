@@ -12,6 +12,8 @@ const db = {
     adminDeleteUser: (targetId) => sb.functions.invoke('admin-delete-user', { body: { targetId } }),
     adminSetProfilePrivacy: (targetId, forcePrivate) => sb.functions.invoke('admin-profile-privacy', { body: { targetId, forcePrivate } }),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
+    registerDevice: (pubkey, label = '') => sb.from('mf_devices').upsert({ id: state.deviceId, user_id: state.me.id, pubkey: JSON.stringify(pubkey), label, last_seen_at: new Date().toISOString(), revoked_at: null }, { onConflict: 'id' }),
+    devicesForUser: (userId) => sb.from('mf_devices').select('id, pubkey').eq('user_id', userId).is('revoked_at', null),
     searchProfiles: (q) => sb.from('mf_profiles').select(PROF).eq('profile_private', false).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
     allProfiles: () => sb.from('mf_profiles').select(PROF).eq('profile_private', false).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),
     adminSearchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).limit(50),
@@ -39,7 +41,7 @@ const db = {
     // inbox: unopened snaps sent to me, newest first, with sender profile
     inbox: () => sb.from('mf_snaps')
         .select('*, sender:sender_id(' + PROF + ')')
-        .eq('recipient_id', state.me.id).is('viewed_at', null).gt('expires_at', new Date().toISOString())
+        .eq('recipient_id', state.me.id).or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`).is('viewed_at', null).gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false }),
     // pending (unopened) relay snaps I've sent to one recipient — for the offline cap
     pendingRelayTo: (recipient_id) => sb.from('mf_snaps')
@@ -59,6 +61,7 @@ const db = {
         .eq('id', id).is('delivered_at', null),
     markSnapOpened: (id) => sb.from('mf_snaps').update({ opened_at: new Date().toISOString(), viewed_at: new Date().toISOString() })
         .eq('id', id),
+    claimSnap: (id) => sb.rpc('mf_claim_snap', { snap_id: id, device_id: state.deviceId }),
     delSnap: (id) => sb.from('mf_snaps').delete().eq('id', id),
     delSnaps: (ids) => sb.from('mf_snaps').delete().in('id', ids),
     // snaps I sent that have now been opened / expired → clean up my device copies
@@ -73,9 +76,9 @@ const db = {
     // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
     // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,
     // anything older is swept below. Keep MSG_TTL in sync with delExpiredMessages.
-    sendMessage: (row) => sb.from('mf_messages').insert(row),
+    sendMessages: (rows) => sb.from('mf_messages').insert(rows),
     // everything sent to me in the last week that I haven't picked up yet (across all friends)
-    myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id)
+    myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id).or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`)
         .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()).order('created_at'),
     // count of my still-undelivered (unexpired) messages to one recipient — the per-recipient offline cap
     pendingMessagesTo: (recipient_id) => sb.from('mf_messages').select('id', { count: 'exact', head: true })

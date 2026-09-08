@@ -1019,6 +1019,12 @@ export const onIncomingCall = (incoming) => {
     $('#dec', banner).onclick = () => { clear(); unmountCallApps(); try { incoming.close(); } catch (e) {} };
     $('#acc', banner).onclick = async () => {
         clear();
+        const { data: claimed, error: claimError } = await db.claimCall(incoming.id);
+        if (claimError || !claimed) {
+            toast('This call was answered on another device.');
+            try { incoming.close(); } catch (e) {}
+            return;
+        }
         cameraFacing = 'user';
         try { localStream = await getMedia(video, cameraFacing); }
         catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }

@@ -14,6 +14,7 @@ const db = {
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
     registerDevice: (pubkey, label = '') => sb.from('mf_devices').upsert({ id: state.deviceId, user_id: state.me.id, pubkey: JSON.stringify(pubkey), label, last_seen_at: new Date().toISOString(), revoked_at: null }, { onConflict: 'id' }),
     devicesForUser: (userId) => sb.from('mf_devices').select('id, pubkey').eq('user_id', userId).is('revoked_at', null),
+    claimCall: (callId) => sb.rpc('mf_claim_call', { call_id: callId, device_id: state.deviceId }),
     searchProfiles: (q) => sb.from('mf_profiles').select(PROF).eq('profile_private', false).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),
     allProfiles: () => sb.from('mf_profiles').select(PROF).eq('profile_private', false).neq('id', state.me.id).order('created_at', { ascending: false }).limit(50),
     adminSearchProfiles: (q) => sb.from('mf_profiles').select(PROF).ilike('username', `%${q}%`).limit(50),

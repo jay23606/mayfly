@@ -79,7 +79,7 @@ const makeMediaConn = (remote, cid, initiator, metadata, stream) => {
     const fireClose = () => { if (closed) return; closed = true; clearTimeout(discT); clearTimeout(restartT); conns.delete(cid); ev.emit('close'); };
     const addTracks = (s) => s.getTracks().forEach(t => pc.addTrack(t, s));
     const api = {
-        peer: remote, metadata,
+        id: cid, peer: remote, metadata,
         // A callee can receive the offer's tracks before they tap Accept. Keep the
         // stream so attaching this listener later does not permanently lose video.
         on(e, fn) {

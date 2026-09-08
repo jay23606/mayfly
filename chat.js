@@ -15,7 +15,6 @@ import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from '
 // lives on the server.
 
 const MSG_MAX = 2000;             // max characters per chat message
-const MSG_PENDING_CAP = 10;       // max undelivered messages queued to one offline recipient
 const conns = new Map();          // uid -> live P2P data conn (for media/voice/typing)
 const pubCache = new Map();       // uid -> recipient device public keys
 let inboxByUser = {};             // uid -> [unopened snap rows]
@@ -536,15 +535,6 @@ export const sendText = async (uid, username, text, localEntry = null, options =
     const keepLocalHistory = options.keepLocalHistory !== false;
     const countTowardStreak = options.countTowardStreak !== false;
     text = text.slice(0, MSG_MAX);   // hard size cap (backstop to the input maxlength)
-    // Cap how many undelivered messages can queue up for a friend who's offline.
-    if (!isOnline(uid)) {
-        const { count } = await db.pendingMessagesTo(uid);
-        if (count && count >= MSG_PENDING_CAP) {
-            const msg = `(too many undelivered messages — wait until ${username} opens mayfly)`;
-            if (openUid === uid) appendBubble(msg, 'sys'); else toast('Too many undelivered messages.');
-            return false;
-        }
-    }
     const msgId = localEntry?.msgId || entryId();   // so the row's realtime DELETE = "delivered" receipt
     const entry = localEntry || { me: true, kind: 'text', text, at: Date.now(), msgId, status: 'sent', localId: entryId() };
     // Special entries (GIFs, Clips, Story replies) also need this ID so either person

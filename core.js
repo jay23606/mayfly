@@ -12,6 +12,7 @@ const FULL_PX      = 1080;  // longest edge of the full snap image (P2P / encryp
 const FULL_Q       = 0.85;  // JPEG quality of the full snap
 const STORY_PREVIEW_MAX = 20 * 1024; // maximum database bytes for an offline Story preview
 const RELAY_MAX = 50 * 1024;         // maximum bytes for an encrypted offline relay snap (keeps Storage bounded)
+const VIDEO_RELAY_MAX = 20 * 1024 * 1024; // encrypted offline videos share the existing media ceiling
 const SNAP_TTL_H   = 24;    // a snap self-destructs this many hours after it's sent
 const STORY_TTL_H  = 24;    // stories are visible for one day
 
@@ -126,7 +127,8 @@ const makeStoryPreview = async (blob) => {
 // The offline-relay copy of a photo, re-encoded as WebP within a byte budget so one
 // user's encrypted Storage footprint stays bounded. Steps resolution then quality down
 // until the encoded image fits; the live P2P copy keeps full quality (it never touches
-// the server). Returns { bytes: Uint8Array, mime }. Video is never relayed (live-only).
+// the server). Video is already compressed by MediaRecorder, so relay it as-is up to
+// the same 20 MB ceiling used by other Mayfly media. Returns { bytes, mime }.
 const encodeBytes = (canvas, mime, q) => new Promise((res, rej) =>
     canvas.toBlob(b => b ? b.arrayBuffer().then(a => res(new Uint8Array(a))) : rej(new Error('encode failed')), mime, q));
 const makeRelayImage = async (blob, cap = RELAY_MAX) => {
@@ -142,6 +144,11 @@ const makeRelayImage = async (blob, cap = RELAY_MAX) => {
         }
         return { bytes: await encodeBytes(scaleTo(im, 240), mime, 0.4), mime };  // smallest fallback
     } finally { im.close?.(); }
+};
+const makeRelayMedia = async (blob) => {
+    if (!blob.type?.startsWith('video/')) return makeRelayImage(blob);
+    if (blob.size > VIDEO_RELAY_MAX) throw new Error('relay-video-too-large');
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), mime: blob.type || 'video/webm' };
 };
 // A video snap keeps its original recording and derives a tiny image preview for the inbox.
 const processVideo = async (blob) => {
@@ -191,5 +198,5 @@ const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
-    processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
+    processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeRelayMedia, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
     isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, fullCache, isOnline };

@@ -103,7 +103,7 @@
 
   <section id="paths">
     <h2>3. Delivery and messaging paths</h2>
-    <p>Mayfly uses different paths for different feature classes. Privacy claims therefore depend on the path under discussion: a live Snap, an offline photo relay, a direct message, and group text do not have identical properties.</p>
+    <p>Mayfly uses different paths for different feature classes. Privacy claims therefore depend on the path under discussion: a live Snap, an offline media relay, a direct message, and group text do not have identical properties.</p>
 
     <h3>3.1 Live Snaps and calls</h3>
     <ol>
@@ -114,12 +114,12 @@
     </ol>
     <p>Under this path, the backend does not store the live full-resolution payload. It can still handle account identity, signaling, lifecycle data, timestamps, recipients, a small preview, and a supplied caption.</p>
 
-    <h3>3.2 Offline photo relay</h3>
-    <p>When a recipient is offline, Mayfly offers a deliberately constrained fallback for photos. The browser re-encodes the photo to fit a 50 KB relay budget, encrypts the media once with a random AES-GCM key, and uploads that ciphertext to private Storage. Each recipient receives a distinct ECDH P-256-encrypted copy of the content key, then decrypts the payload locally with its device-local private key.</p>
-    <p>The current policy allows one unopened relay per recipient and 100 outstanding relay payloads per sender; a single payload may fan out to multiple recipients without duplicating the media ciphertext. Unopened relays have a seven-day delivery window. This is a limited encrypted fallback, not a cloud media inbox. Video has no corresponding offline relay.</p>
+    <h3>3.2 Offline media relay</h3>
+    <p>When a recipient is offline, Mayfly offers a deliberately constrained fallback for photos and videos. The browser re-encodes a photo to fit a 50 KB relay budget or accepts an already-compressed video up to 20 MB, encrypts the media once with a random AES-GCM key, and uploads that ciphertext to private Storage. Each recipient device receives a distinct ECDH P-256-encrypted copy of the content key, then decrypts the payload locally with its device-local private key.</p>
+    <p>The current policy allows one unopened relay per recipient and 100 outstanding relay payloads per sender; a single payload may fan out without duplicating the media ciphertext. It is deleted after all linked recipients claim it, while an unopened relay has a seven-day delivery window. This is a limited encrypted fallback, not a permanent cloud media inbox.</p>
 
     <h3>3.3 Direct encrypted text</h3>
-    <p>For 1:1 text, the sender&rsquo;s browser encrypts the message to the recipient&rsquo;s public key. The database receives ciphertext, an IV, an ephemeral public key, routing identifiers, and lifecycle metadata. The recipient decrypts locally, retains local thread history, and the application removes the delivery row after ingesting it. Undelivered text is capped at ten messages per recipient and expires after seven days.</p>
+    <p>For 1:1 text, the sender&rsquo;s browser encrypts the message to the recipient&rsquo;s public key. The database receives ciphertext, an IV, an ephemeral public key, routing identifiers, and lifecycle metadata. The recipient decrypts locally, retains local thread history, and the application removes the delivery row after ingesting it. Undelivered text expires after seven days.</p>
 
     <h3>3.4 Group and live extras</h3>
     <p>Group membership is persistent and protected by database policy. Open group text uses member-authorized Realtime Broadcast and is intentionally non-durable. Group media, calls, voice clips, files, and in-call games use live peer-to-peer paths. The current implementation should not describe group text as end-to-end encrypted merely because access to its Realtime channel is authorized.</p>
@@ -143,7 +143,7 @@
       <thead><tr><th>Data or event</th><th>Backend can handle or observe</th><th>Not received as plaintext or full media</th></tr></thead>
       <tbody>
         <tr><td>Live 1:1 Snap or call</td><td>Account identity, signaling, status rows, timestamps, recipients, a small Snap preview, and any supplied caption.</td><td>Full live photo/video payload and call media.</td></tr>
-        <tr><td>Offline photo Snap</td><td>Relay ciphertext, encryption metadata, sender-recipient relation, lifecycle metadata, a small preview, and caption.</td><td>Relay photo plaintext, provided the recipient device key remains private.</td></tr>
+        <tr><td>Offline photo/video Snap</td><td>Relay ciphertext, encryption metadata, sender-recipient relation, lifecycle metadata, a small preview, and caption.</td><td>Relay media plaintext, provided the recipient device key remains private.</td></tr>
         <tr><td>1:1 text message</td><td>Sender and recipient IDs, timestamps, delivery state, ciphertext, IV, and ephemeral public key.</td><td>Message-body plaintext.</td></tr>
         <tr><td>Group text</td><td>Member-authorized Realtime Broadcast traffic while it is live; group membership and metadata.</td><td>No durable group-text history is written by the current design; however, the path is not claimed to be end-to-end encrypted.</td></tr>
         <tr><td>Memories and Clips preferences</td><td>Clips searches pass through a YouTube-backed Edge Function.</td><td>Browser-local Memories and saved, liked, followed, or hidden Clip preferences, unless a user explicitly shares a Clip in chat.</td></tr>
@@ -156,7 +156,7 @@
     <h2>6. Limitations and operational considerations</h2>
     <p>The architecture has intentional trade-offs. It reduces the amount of full media held by the application&rsquo;s managed services, but it does not offer the same delivery guarantees as a conventional durable media store.</p>
     <ul>
-      <li>There is no offline relay for video Snaps, voice notes, files, or live group media.</li>
+      <li>Photo and video Snaps have an encrypted offline relay. Voice notes, files, and live group media remain live-only.</li>
       <li>There is no configured TURN relay in the current implementation, so calls and peer-to-peer delivery can fail on restrictive or cellular networks.</li>
       <li>There is no shared multi-device key-recovery model; device-local keys are an intentional constraint.</li>
       <li>Expired relay cleanup is currently client-triggered rather than performed by a scheduled server job.</li>
@@ -172,7 +172,7 @@
       <thead><tr><th>Question</th><th>Typical hosted media service</th><th>Mayfly&rsquo;s current default</th></tr></thead>
       <tbody>
         <tr><td>Where does a full live Snap wait?</td><td>Provider storage or CDN until delivered, viewed, or expired.</td><td>On the sender&rsquo;s browser, then directly on the recipient&rsquo;s browser when connected.</td></tr>
-        <tr><td>What happens while the recipient is offline?</td><td>Usually durable, full-quality queued delivery.</td><td>A small encrypted photo relay only; video and other live media wait for presence.</td></tr>
+        <tr><td>What happens while the recipient is offline?</td><td>Usually durable, full-quality queued delivery.</td><td>An encrypted photo or video relay waits for the recipient; voice notes, files, and other live media still wait for presence.</td></tr>
         <tr><td>Where does private text wait?</td><td>Typically provider-managed message storage.</td><td>Recipient-encrypted ciphertext, followed by local history after ingestion.</td></tr>
         <tr><td>What can be moderated centrally?</td><td>Hosted media and retained messages can support server-side review.</td><td>Metadata, accounts, and reports are available; live full media is not centrally retained for scanning.</td></tr>
         <tr><td>What is the principal operational challenge?</td><td>Protecting and scaling a large durable media system.</td><td>Making peer connections reliable, explaining local-state limits, and designing safe fallbacks.</td></tr>
@@ -184,7 +184,7 @@
     <h2>8. Implementation references</h2>
     <p>This paper describes the published Mayfly implementation rather than every possible future deployment. The principal paths can be inspected in the source.</p>
     <ol class="references">
-      <li><a href="https://github.com/jay23606/mayfly/blob/main/core.js"><code>core.js</code></a> handles browser media processing, preview sizing, the 50 KB relay budget, Stories previews, and IndexedDB setup.</li>
+      <li><a href="https://github.com/jay23606/mayfly/blob/main/core.js"><code>core.js</code></a> handles browser media processing, preview sizing, photo/video relay budgets, Stories previews, and IndexedDB setup.</li>
       <li><a href="https://github.com/jay23606/mayfly/blob/main/crypto.js"><code>crypto.js</code></a> implements the ECDH P-256 to AES-GCM recipient encryption used by relays and direct messages.</li>
       <li><a href="https://github.com/jay23606/mayfly/blob/main/rtc.js"><code>rtc.js</code></a> contains WebRTC signaling and currently has an empty TURN configuration.</li>
       <li><a href="https://github.com/jay23606/mayfly/blob/main/chat.js"><code>chat.js</code></a>, <a href="https://github.com/jay23606/mayfly/blob/main/groups.js"><code>groups.js</code></a>, and <a href="https://github.com/jay23606/mayfly/blob/main/callapps.js"><code>callapps.js</code></a> implement conversations, group and live media, calls, and activities.</li>

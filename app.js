@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl, icon,
-    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeAvatar,
+    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
 import { initPush, registerSW, enablePush, disablePush, pushPreference } from './push.js';
@@ -45,6 +45,53 @@ const startPresence = () => {
         if (status === 'SUBSCRIBED') await presenceCh.track({ user_id: state.me.id, username: state.profile.username });
     });
 };
+
+// A service worker cannot hold a Realtime websocket open while the operating
+// system freezes a background PWA. It can, however, wake the page with a push.
+// Rebuild the shared socket after a longer suspension so presence and signaling
+// recover immediately instead of waiting for the next heartbeat timeout.
+let backgroundedAt = 0, lastRealtimeRecovery = 0, recoveryTimer = null;
+const recoverRealtime = async (forceSocket = false) => {
+    if (!state.me || Date.now() - lastRealtimeRecovery < 1500) return;
+    lastRealtimeRecovery = Date.now();
+    try {
+        const connected = sb.realtime.isConnected?.() ?? true;
+        if (forceSocket || !connected) {
+            await sb.realtime.disconnect();
+            sb.realtime.connect();
+        }
+        // Channels rejoin automatically with the shared socket. Re-track as soon
+        // as possible as well; this is harmless when the presence channel is
+        // already joined and shortens the stale-offline window after a resume.
+        if (presenceCh?.state === 'joined') {
+            await presenceCh.track({ user_id: state.me.id, username: state.profile?.username });
+        }
+        db.touchDevice().then(() => {}, () => {});
+        syncMessages().then(setChatDot, () => {});
+        reconnectOpenChat();
+        clearTimeout(recoveryTimer);
+        recoveryTimer = setTimeout(() => {
+            if (presenceCh?.state === 'joined' && state.me) {
+                presenceCh.track({ user_id: state.me.id, username: state.profile?.username }).catch(() => {});
+            }
+        }, 1200);
+    } catch (e) {}
+};
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') backgroundedAt = Date.now();
+    else recoverRealtime(backgroundedAt > 0 && Date.now() - backgroundedAt > 30_000);
+}, { passive: true });
+window.addEventListener('pageshow', (event) => recoverRealtime(!!event.persisted), { passive: true });
+window.addEventListener('online', () => recoverRealtime(true), { passive: true });
+window.addEventListener('focus', () => recoverRealtime(false), { passive: true });
+// Chrome emits these Page Lifecycle events around tab freezing. Other browsers
+// simply ignore them and use visibility/pageshow above.
+document.addEventListener('freeze', () => { backgroundedAt = Date.now(); }, { passive: true });
+document.addEventListener('resume', () => recoverRealtime(true), { passive: true });
+navigator.serviceWorker?.addEventListener('message', (event) => {
+    if (event.data?.type === 'mf-wake') recoverRealtime(true);
+});
 
 // ===================== camera-first capture =====================
 let stream = null, facing = 'user';
@@ -342,7 +389,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
         const offlineTargets = targets.filter(u => !isOnline(u.id));
         targets = targets.filter(u => isOnline(u.id));
-        let ok = 0, blocked = 0, novideo = 0, toomany = 0;
+        let ok = 0, blocked = 0, toobig = 0, toomany = 0;
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
         let done = 0;
@@ -353,19 +400,16 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
             results.forEach((r, index) => {
                 if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
-                else if (r === 'novideo') novideo++;
+                else if (r === 'toobig') toobig++;
                 else if (r === 'toomany') toomany++;
             });
             done += batch.length;
         }
         if (offlineTargets.length) {
-            if (shot.mime?.startsWith('video/')) novideo += offlineTargets.length;
-            else {
-                send.textContent = `Preparing one encrypted relay for ${offlineTargets.length} friend${offlineTargets.length === 1 ? '' : 's'}...`;
-                const relay = await sendSharedRelay(shot, offlineTargets, caption, timer);
-                relay.sent.forEach(({ uid, id, kind }) => { ok++; noteSentSnap(uid, id, kind); });
-                blocked += relay.blocked; toomany += relay.toomany;
-            }
+            send.textContent = `Preparing one encrypted relay for ${offlineTargets.length} friend${offlineTargets.length === 1 ? '' : 's'}...`;
+            const relay = await sendSharedRelay(shot, offlineTargets, caption, timer);
+            relay.sent.forEach(({ uid, id, kind }) => { ok++; noteSentSnap(uid, id, kind); });
+            blocked += relay.blocked; toomany += relay.toomany; toobig += relay.toobig;
         }
         if (selectedGroups.length) {
             const file = await snapFile();
@@ -376,7 +420,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         }
         // one toast wins (it replaces), so prefer the most useful message
         if (toomany) toast(`You've hit ${RELAY_LIMIT} unopened offline snaps${ok ? ` · sent ${ok}` : ''}. Some couldn't be sent until they're opened or expire.`);
-        else if (novideo) toast(`Video snaps only send to friends who are online${ok ? ` · sent ${ok}` : ''}.`);
+        else if (toobig) toast(`That video is too large for offline delivery (20 MB max)${ok ? ` · sent ${ok}` : ''}.`);
         else if (ok) toast(`Sent 🐛`);
         else if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
@@ -406,7 +450,7 @@ const sendLiveSnap = async (shot, u, caption, secs) => {
 
 // One encrypted media payload, with a small recipient-specific wrapped key per row.
 const sendSharedRelay = async (shot, targets, caption, secs) => {
-    const result = { sent: [], blocked: 0, toomany: 0 };
+    const result = { sent: [], blocked: 0, toomany: 0, toobig: 0 };
     const checked = await Promise.all(targets.map(async (u) => {
         const { count } = await db.pendingRelayTo(u.id);
         if (count && count >= 1) return { u, ok: false, blocked: true };
@@ -431,7 +475,7 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
     let payloadCreated = false;
     try {
         const source = shot.rawBlob || await fetch(shot.full).then(r => r.blob());
-        const { bytes, mime } = await makeRelayImage(source);
+        const { bytes, mime } = await makeRelayMedia(source);
         const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(bytes);
         const { error: payloadError } = await db.addRelayPayload({ id, sender_id: state.me.id, content_iv, mime, expires_at });
         if (payloadError) throw payloadError;
@@ -453,7 +497,7 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
                     wrapped_key: key.wrapped_key, iv: key.iv, eph_pub: key.eph_pub, expires_at,
                 });
                 if (error) throw error;
-                return { uid: u.id, id: snapId, kind: 'photo' };
+                return { uid: u.id, id: snapId, kind: mime.startsWith('video/') ? 'video' : 'photo' };
             } catch (e) { console.error('[mayfly] shared relay recipient failed', e); return null; }
             });
         }));
@@ -466,6 +510,7 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
         }
     } catch (e) {
         console.error('[mayfly] shared relay failed', e);
+        if (e?.message === 'relay-video-too-large') result.toobig = recipients.length;
         if (payloadCreated) {
             await sb.storage.from(SNAP_BUCKET).remove([id]);
             await db.delRelayPayloads([id]);
@@ -1112,12 +1157,6 @@ const enterApp = async (session) => {
     await startRtc(onIncomingDM, (c) => c.metadata?.group ? onIncomingGroupCall(c) : onIncomingCall(c), onIncomingGroupData);
     startPresence();
     startRealtime();
-    // Mobile browsers commonly suspend websocket work in the background. Catch up
-    // immediately when the page returns, instead of making the user refresh.
-    const catchUpMessages = () => syncMessages().catch(() => {});
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') catchUpMessages(); }, { passive: true });
-    window.addEventListener('pageshow', catchUpMessages, { passive: true });
-    window.addEventListener('online', catchUpMessages, { passive: true });
     bootGroups();
     sweepLocal();
     // Ask once for notification permission (also powers the in-app foreground notifications),

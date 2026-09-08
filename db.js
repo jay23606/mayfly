@@ -13,6 +13,7 @@ const db = {
     adminSetProfilePrivacy: (targetId, forcePrivate) => sb.functions.invoke('admin-profile-privacy', { body: { targetId, forcePrivate } }),
     upsertProfile: (row) => sb.from('mf_profiles').upsert({ id: state.me.id, ...row }).select().maybeSingle(),
     registerDevice: (pubkey, label = '') => sb.from('mf_devices').upsert({ id: state.deviceId, user_id: state.me.id, pubkey: JSON.stringify(pubkey), label, last_seen_at: new Date().toISOString(), revoked_at: null }, { onConflict: 'id' }),
+    touchDevice: () => sb.from('mf_devices').update({ last_seen_at: new Date().toISOString() }).eq('id', state.deviceId).eq('user_id', state.me.id),
     devicesForUser: (userId) => sb.from('mf_devices').select('id, pubkey').eq('user_id', userId).is('revoked_at', null),
     claimCall: (callId) => sb.rpc('mf_claim_call', { call_id: callId, device_id: state.deviceId }),
     searchProfiles: (q) => sb.from('mf_profiles').select(PROF).eq('profile_private', false).ilike('username', `%${q}%`).neq('id', state.me.id).limit(50),

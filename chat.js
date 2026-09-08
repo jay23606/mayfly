@@ -757,8 +757,14 @@ const openSnap = async (s, card) => {
 // opened. The old wasOpened=false caller burned Snaps that failed to load.
 const burnSnap = async (s, card) => {
     await db.markSnapOpened(s.id);
+    // The last recipient/device to claim a shared relay may remove its encrypted
+    // payload. Policies keep fan-out media intact while anyone still has it unopened.
+    if (s.relay_id) {
+        const removed = await sb.storage.from(SNAP_BUCKET).remove([s.relay_id]);
+        if (!removed.error) await db.delRelayPayloads([s.relay_id]);
+    }
     await db.delSnap(s.id);
-    // A shared relay stays available for its other recipients until expiry.
+    // Legacy single-recipient relay objects predate shared relay payload rows.
     if (s.delivery?.startsWith('relay') && !s.relay_id) sb.storage.from(SNAP_BUCKET).remove([s.id]);
     inboxByUser[s.sender_id] = (inboxByUser[s.sender_id] || []).filter(x => x.id !== s.id);
     card?.remove();

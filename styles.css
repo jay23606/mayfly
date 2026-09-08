@@ -382,13 +382,14 @@ body.inchat main.chats{max-width:none;height:calc(var(--app-vh, 100dvh) - var(--
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent2);margin-right:4px}
 .tbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:16px 14px 20px;display:flex;flex-direction:column;gap:9px}
 .threadhint{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
-.snapcard{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
+.snapcard{position:relative;align-self:flex-start;display:flex;align-items:center;gap:8px;overflow:hidden;background:var(--panel2);border:1px solid var(--accent);color:var(--text);border-radius:16px;border-bottom-left-radius:5px;padding:12px 16px;cursor:pointer;font-weight:600}
 .snapcard.photo{border-color:#ff3b5c;background:#ff3b5c18}
 .snapcard.video{border-color:#9b6cff;background:#9b6cff18}
 .snapcard.photo .sq,.conv.snap-photo .sub.hot{color:#ff5572}
 .snapcard.video .sq,.conv.snap-video .sub.hot{color:#ae8cff}
 .snapcard .sqt{color:var(--muted);font-weight:400;font-size:12px}
-.snapcard.opening{opacity:.5}
+.snapcard.opening{opacity:.82}
+.snapload{position:absolute;inset:auto 0 0;height:4px;background:#ffffff22}.snapload i{display:block;width:calc(var(--snap-progress,0) * 100%);height:100%;background:currentColor;transition:width .12s linear}.snapload b{position:absolute;right:8px;bottom:6px;padding:2px 6px;border-radius:999px;background:#08080cdd;color:#fff;font-size:10px;font-weight:700;white-space:nowrap}.snapload[hidden]{display:none}
 /* sender-side delivery receipt (Snapchat-style): filled = Delivered, hollow = Opened.
    colour marks the type — red = photo snap, purple = video snap, blue = chat (later). */
 .msgstatus{align-self:flex-start;display:flex;align-items:center;gap:5px;margin:-2px 6px 2px;font-size:11px;font-weight:600;color:var(--muted)}

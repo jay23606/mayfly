@@ -478,7 +478,7 @@ const renderThreadBody = async (uid, preserveScroll = false) => {
 const snapCard = (s) => {
     const kind = snapKind(s), label = kind === 'video' ? 'Video Snap' : 'Photo Snap';
     const action = Number(s.timer) > 0 ? 'Tap to view' : 'Tap to open';
-    const card = el(`<button class="snapcard ${kind} them"><span class="sq">${kind === 'video' ? '▶' : '●'}</span> ${action} ${label} <span class="sqt">${ago(s.created_at)}</span></button>`);
+    const card = el(`<button class="snapcard ${kind} them"><span class="sq">${kind === 'video' ? '▶' : '●'}</span><span class="snaplabel">${action} ${label}</span><span class="sqt">${ago(s.created_at)}</span><span class="snapload" hidden><i></i><b>Connecting…</b></span></button>`);
     card.onclick = () => openSnap(s, card);
     return card;
 };
@@ -627,21 +627,64 @@ const openGifPicker = (uid, username) => {
 };
 
 // ===================== snap opening =====================
+const relayDownload = async (path, onProgress) => {
+    // A signed URL lets Fetch expose the response stream, unlike storage.download(),
+    // so large encrypted videos can report bytes as they arrive.
+    const { data, error } = await sb.storage.from(SNAP_BUCKET).createSignedUrl(path, 120);
+    if (error || !data?.signedUrl) throw error || new Error('Could not create download URL');
+    const response = await fetch(data.signedUrl, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Download failed (${response.status})`);
+    const total = Math.max(0, Number(response.headers.get('content-length')) || 0);
+    if (!response.body?.getReader) {
+        const blob = await response.blob();
+        onProgress(blob.size, total || blob.size);
+        return blob;
+    }
+    const reader = response.body.getReader(), chunks = [];
+    let received = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); received += value.byteLength;
+        onProgress(received, total);
+    }
+    return new Blob(chunks, { type: 'application/octet-stream' });
+};
+const formatSnapProgress = ({ phase = 'Loading', received = 0, total = 0 }) => {
+    if (total > 0) return `${Math.min(100, Math.round(received / total * 100))}%`;
+    if (received > 0) return `${(received / 1024 / 1024).toFixed(received >= 1024 * 1024 ? 1 : 2)} MB`;
+    return `${phase}…`;
+};
 const openSnap = async (s, card) => {
-    if (card) { card.disabled = true; card.classList.add('opening'); }
+    const report = (progress) => {
+        if (!card) return;
+        const load = $('.snapload', card), fill = $('.snapload i', card), text = $('.snapload b', card);
+        if (load) load.hidden = false;
+        if (text) text.textContent = formatSnapProgress(progress);
+        if (fill) fill.style.setProperty('--snap-progress', progress.total > 0 ? Math.min(1, progress.received / progress.total) : 0);
+    };
+    const resetProgress = () => {
+        card?.classList.remove('opening');
+        const load = card && $('.snapload', card); if (load) load.hidden = true;
+        if (card) card.disabled = false;
+    };
+    if (card) { card.disabled = true; card.classList.add('opening'); report({ phase: 'Loading' }); }
     let full = null;
     try {
-        if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id, s.sender_device_id);
+        if (s.delivery?.startsWith('live')) full = await fetchSnap(s.id, s.sender_id, s.sender_device_id, report);
         else if (s.relay_id) {
             const { data: relay } = await db.relayPayload(s.relay_id);
-            const dl = relay && await sb.storage.from(SNAP_BUCKET).download(s.relay_id);
-            if (relay && dl && !dl.error) {
-                const pt = await decryptSharedRelay(state.priv, s.eph_pub, s.iv, s.wrapped_key, relay.content_iv, await dl.data.arrayBuffer());
+            if (relay) {
+                const blob = await relayDownload(s.relay_id, (received, total) => report({ phase: 'Downloading', received, total }));
+                report({ phase: 'Decrypting' });
+                const pt = await decryptSharedRelay(state.priv, s.eph_pub, s.iv, s.wrapped_key, relay.content_iv, await blob.arrayBuffer());
                 full = URL.createObjectURL(new Blob([pt], { type: relay.mime || snapMime(s) }));
             }
         } else {
-            const dl = await sb.storage.from(SNAP_BUCKET).download(s.id);
-            if (!dl.error) { const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await dl.data.arrayBuffer()); full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) })); }
+            const blob = await relayDownload(s.id, (received, total) => report({ phase: 'Downloading', received, total }));
+            report({ phase: 'Decrypting' });
+            const pt = await decryptWith(state.priv, s.eph_pub, s.iv, await blob.arrayBuffer());
+            full = URL.createObjectURL(new Blob([pt], { type: snapMime(s) }));
         }
     } catch (e) { console.error('[mayfly] open snap', e); }
     // Failing to fetch is not the same as being consumed, so the Snap stays put
@@ -655,8 +698,7 @@ const openSnap = async (s, card) => {
         toast(s.delivery?.startsWith('live')
             ? 'Sender is offline — try again when they are back.'
             : 'Could not load this Snap — try again.');
-        card?.classList.remove('opening');
-        if (card) card.disabled = false;
+        resetProgress();
         return;
     }
     if (s.logical_id) {
@@ -664,7 +706,7 @@ const openSnap = async (s, card) => {
         if (error || !claimed) {
             if (full.startsWith('blob:')) URL.revokeObjectURL(full);
             toast('This Snap was opened on another device.');
-            card?.classList.remove('opening'); if (card) card.disabled = false;
+            resetProgress();
             return;
         }
     }
@@ -690,7 +732,7 @@ const openSnap = async (s, card) => {
         } catch (e) {
             console.error('[mayfly] save inline snap', e);
             toast('Could not save this Snap into the chat.');
-            card?.classList.remove('opening'); if (card) card.disabled = false;
+            resetProgress();
         }
         return;
     }
@@ -706,8 +748,7 @@ const openSnap = async (s, card) => {
         clearTimeout(t); clearTimeout(loadTimer);
         ov.remove(); release();
         toast('This Snap could not start — try again.');
-        card?.classList.remove('opening');
-        if (card) card.disabled = false;
+        resetProgress();
     };
     const finish = async () => {
         if (done || !viewing) return;

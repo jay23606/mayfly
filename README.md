@@ -14,7 +14,7 @@ It is intentionally **not serverless**: the static frontend uses Supabase for au
 - **Social layer** — 24-hour Stories, replies, viewers, streaks, public profiles, friend privacy controls, and administrator-enforced privacy locks.
 - **Clips, GIFs, and stickers** — a YouTube-backed Clips feed with local likes/saves/follows/interests and embedded chat shares; GIPHY-powered GIFs and stickers in chat.
 - **Local Memories** — captured media can be saved, deleted, reused in a chat, or posted to a Story from IndexedDB on the current browser. They are not synced to the server.
-- **Shared call activities** — Chess, Geometry Dash, Pac-Man, Pool, Air Hockey, Scrabble, Trivia, Icebreakers, Stack, and Tetris run during 1:1 calls.
+- **Shared call activities** — Chess, Geometry Dash, Metro Rush, Pac-Man, Pool, Air Hockey, Scrabble, Trivia, Icebreakers, Stack, and Tetris run during 1:1 calls.
 
 ## How a Snap travels
 

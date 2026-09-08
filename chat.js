@@ -556,7 +556,24 @@ export const sendText = async (uid, username, text, localEntry = null, options =
         if (convBox) renderConvs(convBox, uid);
     }
     const devices = await deviceKeysOf(uid);
-    if (!devices.length) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
+    if (!devices.length) {
+        // Retry the legacy key directly rather than treating an unavailable device
+        // registry as a new-account setup failure. This keeps every existing friend
+        // reachable during the multi-device rollout.
+        try {
+            pubCache.delete(uid);
+            const { data: profile } = await db.profileById(uid);
+            const legacyKey = profile?.pubkey ? JSON.parse(profile.pubkey) : null;
+            if (legacyKey) {
+                const enc = await encryptText(legacyKey, text);
+                const { error } = await db.sendMessage({ id: msgId, sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body });
+                if (!error) { if (countTowardStreak) db.bumpStreak(uid).then(() => {}, () => {}); return true; }
+                console.error('[mayfly] legacy message retry', error);
+            }
+        } catch (e) { console.error('[mayfly] legacy message retry', e); }
+        if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened Mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.');
+        return false;
+    }
     let error = null;
     try {
         const rows = await Promise.all(devices.map(async (device) => {
@@ -567,6 +584,19 @@ export const sendText = async (uid, username, text, localEntry = null, options =
     } catch (e) {
         console.error('[mayfly] multi-device message send', e);
         error = e;
+    }
+    // Never let a device-fan-out problem strand normal chat. Older Mayfly clients
+    // understand this account-key envelope, and it gives the sender a working
+    // delivery path while a recipient's device registry is being refreshed.
+    if (error) {
+        try {
+            const { data: profile } = await db.profileById(uid);
+            const legacyKey = profile?.pubkey ? JSON.parse(profile.pubkey) : null;
+            if (legacyKey) {
+                const enc = await encryptText(legacyKey, text);
+                ({ error } = await db.sendMessage({ id: msgId, sender_id: state.me.id, recipient_id: uid, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body }));
+            }
+        } catch (e) { console.error('[mayfly] legacy message fallback', e); }
     }
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
     if (countTowardStreak) db.bumpStreak(uid).then(() => {}, () => {});

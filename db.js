@@ -78,6 +78,7 @@ const db = {
     // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,
     // anything older is swept below. Keep MSG_TTL in sync with delExpiredMessages.
     sendMessages: (rows) => sb.from('mf_messages').insert(rows),
+    sendMessage: (row) => sb.from('mf_messages').insert(row),
     // everything sent to me in the last week that I haven't picked up yet (across all friends)
     myUndelivered: () => sb.from('mf_messages').select('*').eq('recipient_id', state.me.id).or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`)
         .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()).order('created_at'),

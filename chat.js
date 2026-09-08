@@ -557,11 +557,17 @@ export const sendText = async (uid, username, text, localEntry = null, options =
     }
     const devices = await deviceKeysOf(uid);
     if (!devices.length) { if (openUid === uid) appendBubble('(can’t encrypt — they haven’t opened mayfly yet)', 'sys'); else toast('They have not finished setting up Mayfly.'); return false; }
-    const rows = await Promise.all(devices.map(async (device) => {
-        const enc = await encryptText(device.pubkey, text);
-        return { id: crypto.randomUUID(), message_id: msgId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body };
-    }));
-    const { error } = await db.sendMessages(rows);
+    let error = null;
+    try {
+        const rows = await Promise.all(devices.map(async (device) => {
+            const enc = await encryptText(device.pubkey, text);
+            return { id: entryId(), message_id: msgId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, iv: enc.iv, eph_pub: enc.eph_pub, body: enc.body };
+        }));
+        ({ error } = await db.sendMessages(rows));
+    } catch (e) {
+        console.error('[mayfly] multi-device message send', e);
+        error = e;
+    }
     if (error) { if (openUid === uid) appendBubble('(failed to send)', 'sys'); else toast('Could not send that reply.'); return false; }
     if (countTowardStreak) db.bumpStreak(uid).then(() => {}, () => {});
     return true;

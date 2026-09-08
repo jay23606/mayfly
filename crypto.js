@@ -29,7 +29,16 @@ export async function loadOrCreateKeys() {
         await idb.set('mykey:priv', privJwk);
         await idb.set('mykey:pub', pubJwk);
     }
-    if (!deviceId) { deviceId = crypto.randomUUID(); await idb.set('mydevice:id', deviceId); }
+    if (!deviceId) {
+        if (crypto.randomUUID) deviceId = crypto.randomUUID();
+        else {
+            const bytes = crypto.getRandomValues(new Uint8Array(16));
+            bytes[6] = (bytes[6] & 0x0f) | 0x40; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+            deviceId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+        await idb.set('mydevice:id', deviceId);
+    }
     const priv = await crypto.subtle.importKey('jwk', privJwk, ECDH, false, ['deriveKey']);
     return { priv, pubJwk, deviceId };
 }

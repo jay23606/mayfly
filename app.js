@@ -12,7 +12,7 @@ import { viewClips, closeClips } from './clips.js';
 import { saveMemory, viewMemories, closeMemories } from './memories.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
-const RELAY_LIMIT = 100;     // hard ceiling on a user's outstanding encrypted relay payloads
+const RELAY_LIMIT = 3;       // hard ceiling on a user's outstanding encrypted relay payloads (each may be any size)
 const RELAY_TTL_DAYS = 7;    // an offline snap self-destructs a week after it's sent if never opened
 // The database RPC below independently verifies this immutable auth-user ID.
 // This client check only controls whether the management UI is shown.
@@ -395,7 +395,9 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
         const offlineTargets = targets.filter(u => !isOnline(u.id));
         targets = targets.filter(u => isOnline(u.id));
-        let ok = 0, blocked = 0, toobig = 0, toomany = 0;
+        let ok = 0, blocked = 0, toomany = 0;
+        // A live P2P send that fails still owes the friend a snap, so it joins the relay batch.
+        const relayTargets = offlineTargets.slice();
         if (toStory) { const s = await postStory(shot, caption); if (s) ok++; }
         const SEND_BATCH_SIZE = 5;
         let done = 0;
@@ -406,16 +408,16 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
             results.forEach((r, index) => {
                 if (r && r.id) { ok++; noteSentSnap(batch[index].id, r.id, r.kind); }
                 else if (r === 'cap') blocked++;
-                else if (r === 'toobig') toobig++;
                 else if (r === 'toomany') toomany++;
+                else relayTargets.push(batch[index]);
             });
             done += batch.length;
         }
-        if (offlineTargets.length) {
-            send.textContent = `Preparing one encrypted relay for ${offlineTargets.length} friend${offlineTargets.length === 1 ? '' : 's'}...`;
-            const relay = await sendSharedRelay(shot, offlineTargets, caption, timer);
+        if (relayTargets.length) {
+            send.textContent = `Preparing one encrypted relay for ${relayTargets.length} friend${relayTargets.length === 1 ? '' : 's'}...`;
+            const relay = await sendSharedRelay(shot, relayTargets, caption, timer);
             relay.sent.forEach(({ uid, id, kind }) => { ok++; noteSentSnap(uid, id, kind); });
-            blocked += relay.blocked; toomany += relay.toomany; toobig += relay.toobig;
+            blocked += relay.blocked; toomany += relay.toomany;
         }
         if (selectedGroups.length) {
             const file = await snapFile();
@@ -426,7 +428,6 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         }
         // one toast wins (it replaces), so prefer the most useful message
         if (toomany) toast(`You've hit ${RELAY_LIMIT} unopened offline snaps${ok ? ` · sent ${ok}` : ''}. Some couldn't be sent until they're opened or expire.`);
-        else if (toobig) toast(`That video is too large for offline delivery (20 MB max)${ok ? ` · sent ${ok}` : ''}.`);
         else if (ok) toast(`Sent 🐛`);
         else if (blocked) toast('Some friends already have an unopened snap from you.');
         releasePreview();
@@ -456,7 +457,7 @@ const sendLiveSnap = async (shot, u, caption, secs) => {
 
 // One encrypted media payload, with a small recipient-specific wrapped key per row.
 const sendSharedRelay = async (shot, targets, caption, secs) => {
-    const result = { sent: [], blocked: 0, toomany: 0, toobig: 0 };
+    const result = { sent: [], blocked: 0, toomany: 0 };
     const checked = await Promise.all(targets.map(async (u) => {
         const { count } = await db.pendingRelayTo(u.id);
         if (count && count >= 1) return { u, ok: false, blocked: true };
@@ -516,7 +517,6 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
         }
     } catch (e) {
         console.error('[mayfly] shared relay failed', e);
-        if (e?.message === 'relay-video-too-large') result.toobig = recipients.length;
         if (payloadCreated) {
             await sb.storage.from(SNAP_BUCKET).remove([id]);
             await db.delRelayPayloads([id]);

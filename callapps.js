@@ -4,7 +4,7 @@
 const APP_BASE = 'https://jay23606.github.io/appmegle/';
 const ACTIVITIES = [
     ['chess', 'Chess'], ['geodash', 'Geometry Dash'], ['pacman', 'Pac-Man'],
-    ['metrorush', 'Metro Rush'],
+    ['metrorush', 'Metro Rush'], ['flappy', 'Flappy Race'],
     ['pool', 'Pool'], ['airhockey', 'Air Hockey'], ['scrabble', 'Scrabble'],
     ['trivia', 'Trivia'], ['icebreakers', 'Icebreakers'], ['stack', 'Stack'], ['tetris', 'Tetris'],
 ];

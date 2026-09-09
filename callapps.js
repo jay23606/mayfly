@@ -15,7 +15,7 @@ let root = null, stage = null, picker = null, send = null, amCaller = false, act
 const sound = (kind) => window.AppmegleSound?.play?.(kind);
 const soundForMessage = (msg) => {
     const t = String(msg?.t || '');
-    if (['eat', 'g', 'play', 'rev', 'boost', 'power', 'shield'].includes(t)) return sound('score');
+    if (['eat', 'g', 'play', 'rev', 'boost', 'power', 'shield', 'draft'].includes(t)) return sound('score');
     if (['reject', 'lock', 'crash'].includes(t)) return sound('wrong');
     if (['restart', 'reset', 'newreq', 'maze', 'q'].includes(t)) return sound('start');
     if (['result', 'over', 'win'].includes(t)) return sound('win');

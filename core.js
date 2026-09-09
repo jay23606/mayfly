@@ -194,9 +194,12 @@ const bytesToDataUrl = (bytes, mime = 'image/jpeg') => new Promise((res) => {
 // ===================== auth / session state =====================
 const state = { me: null, profile: null, priv: null, deviceId: null };   // priv = this device's ECDH private key
 const presenceUsers = {};                                 // user_id -> { username }
+const lastActiveUsers = {};                               // accepted friend id -> ISO timestamp
 const fullCache = makeLru(40);
 const isOnline = (uid) => !!presenceUsers[uid];
+const setFriendActivity = (rows = []) => { for (const k in lastActiveUsers) delete lastActiveUsers[k];for(const row of rows)if(row.user_id&&row.last_active_at)lastActiveUsers[row.user_id]=row.last_active_at; };
+const activityText = (uid, live = 'online') => { if(isOnline(uid))return live;const stamp=lastActiveUsers[uid];if(!stamp)return 'offline';const elapsed=ago(stamp);return elapsed==='just now'?'last active just now':`last active ${elapsed} ago`; };
 
 export { sb, SNAP_BUCKET, SNAP_TTL_H, STORY_TTL_H, $, $$, el, esc, rand, app, toast, ago, initial, idb,
     processImage, processCanvas, processVideo, makeStoryPreview, makeRelayImage, makeRelayMedia, makeAvatar, avatarHTML, dataUrlToBytes, bytesToDataUrl,
-    isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, fullCache, isOnline };
+    isMediaUrl, safeMediaUrl, chunkString, mimeKind, icon, state, presenceUsers, lastActiveUsers, fullCache, isOnline, setFriendActivity, activityText };

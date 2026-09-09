@@ -1,4 +1,4 @@
-import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, initial, ago,
+import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
@@ -362,7 +362,7 @@ export const openConversation = async (box, uid) => {
     openUid = uid; threadBox = box;
     unreadMsg.delete(uid); onChange();
     let username = pubCache.has(uid) ? null : null;
-    const { data: prof } = await db.profileById(uid);
+    const [{ data: prof }, { data: activity }] = await Promise.all([db.profileById(uid),db.friendActivity()]);setFriendActivity(activity||[]);
     username = prof?.username || 'friend';
     openUsername = username;
     if (prof?.pubkey) { try { pubCache.set(uid, JSON.parse(prof.pubkey)); } catch (e) {} }
@@ -370,7 +370,7 @@ export const openConversation = async (box, uid) => {
         <div class="thead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           ${avatarHTML(username, prof?.avatar)}
-          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${isOnline(uid) ? 'active now' : 'offline'}</div></div>
+          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${activityText(uid,'active now')}</div></div>
           <button class="icon callbtn" aria-label="Call">${icon('phone')}</button>
           <button class="icon chatmore" aria-label="Chat options">${icon('more')}</button>
           <div class="headmenu" hidden><button type="button" class="clearthread">Clear chat on this device</button></div>

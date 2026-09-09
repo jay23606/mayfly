@@ -1,5 +1,5 @@
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl, icon,
-    safeMediaUrl, state, presenceUsers, isOnline, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
+    safeMediaUrl, state, presenceUsers, isOnline, setFriendActivity, activityText, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
 import { initPush, registerSW, enablePush, disablePush, pushPreference } from './push.js';
@@ -32,6 +32,9 @@ window.visualViewport?.addEventListener('scroll', syncVisualViewport);
 
 // ===================== presence =====================
 let presenceCh = null;
+let activityTimer = null, lastActivityWrite = 0;
+const touchActivity = (force = false) => { if(!state.me||(!force&&Date.now()-lastActivityWrite<55_000))return;lastActivityWrite=Date.now();db.touchActivity().then(()=>{},()=>{}); };
+const refreshFriendActivity = async () => { const {data}=await db.friendActivity();setFriendActivity(data||[]); };
 const startPresence = () => {
     presenceCh = sb.channel('mayfly-presence', { config: { presence: { key: state.me.id } } });
     presenceCh.on('presence', { event: 'sync' }, () => {
@@ -42,8 +45,9 @@ const startPresence = () => {
         reconnectOpenChat();                      // connect an open chat once the friend comes online
     });
     presenceCh.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') await presenceCh.track({ user_id: state.me.id, username: state.profile.username });
+        if (status === 'SUBSCRIBED') { await presenceCh.track({ user_id: state.me.id, username: state.profile.username });touchActivity(true);refreshFriendActivity().then(()=>{},()=>{}); }
     });
+    clearInterval(activityTimer);activityTimer=setInterval(()=>touchActivity(),60_000);
 };
 
 // A service worker cannot hold a Realtime websocket open while the operating
@@ -67,6 +71,7 @@ const recoverRealtime = async (forceSocket = false) => {
             await presenceCh.track({ user_id: state.me.id, username: state.profile?.username });
         }
         db.touchDevice().then(() => {}, () => {});
+        touchActivity();refreshFriendActivity().then(()=>{},()=>{});
         syncMessages().then(setChatDot, () => {});
         reconnectOpenChat();
         clearTimeout(recoveryTimer);
@@ -79,7 +84,7 @@ const recoverRealtime = async (forceSocket = false) => {
 };
 
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') backgroundedAt = Date.now();
+    if (document.visibilityState === 'hidden') { backgroundedAt = Date.now();touchActivity(); }
     else recoverRealtime(backgroundedAt > 0 && Date.now() - backgroundedAt > 30_000);
 }, { passive: true });
 window.addEventListener('pageshow', (event) => recoverRealtime(!!event.persisted), { passive: true });
@@ -822,10 +827,11 @@ const renderRequests = async () => {
 };
 const renderFriends = async () => {
     const box = $('#friendlist'); if (!box) return;
-    const [{ data: fr }, { data: stk }] = await Promise.all([db.friends(), db.streaks()]);
+    const [{ data: fr }, { data: stk }, { data: activity }] = await Promise.all([db.friends(), db.streaks(), db.friendActivity()]);
     if (!$('#friendlist')) return;
     streakMap = {};
     (stk || []).forEach(s => streakMap[pairKey(s.user_a, s.user_b)] = s.count);
+    setFriendActivity(activity || []);
     const friends = (fr || []).map(otherOf).filter(Boolean);
     box.innerHTML = `<div class="section-title">Your friends</div>`;
     if (!friends.length) return void box.appendChild(el(`<div class="empty">No friends yet — add someone from <b>Add people</b> below.</div>`));
@@ -833,7 +839,7 @@ const renderFriends = async () => {
         const streak = streakMap[pairKey(state.me.id, u.id)] || 0;
         const row = el(`<div class="urow">${avatarHTML(u.username, u.avatar)}
             <div class="who"><button class="profilelink">${esc(u.username)}</button>
-              <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>online' : 'offline'}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
+              <div class="sub">${isOnline(u.id) ? '<i class="dot"></i>' : ''}${activityText(u.id)}${streak ? ` · 🔥 ${streak}` : ''}</div></div>
             <div class="acts"><button class="rowaction chatbtn" data-go="#/c/${u.id}" aria-label="Chat with ${esc(u.username)}" title="Chat">${icon('messageSquare', 20)}</button><button class="rowaction snapbtn" aria-label="Send a Snap to ${esc(u.username)}" title="Send Snap">${icon('camera', 20)}</button></div></div>`);
         $('.profilelink', row).onclick = () => { location.hash = '#/profile/' + u.id; };
         $('.snapbtn', row).onclick = () => { location.hash = '#/snap/' + u.id; };

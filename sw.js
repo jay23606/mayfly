@@ -22,8 +22,10 @@ self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     // A visible but background-throttled Mayfly window can use this message to
     // reconnect presence/signaling before the user even taps the notification.
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    wins.forEach((client) => client.postMessage({ type: 'mf-wake' }));
+    try {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      wins.forEach((client) => client.postMessage({ type: 'mf-wake' }));
+    } catch (e) {}
     await self.registration.showNotification(title, {
       body: d.body || 'You have a new notification',
       tag: d.tag || undefined,

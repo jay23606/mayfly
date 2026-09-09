@@ -66,5 +66,8 @@ Deno.serve(async (req) => {
         throw err;
       })
   ));
-  return json({ sent: results.filter((r) => r.status === "fulfilled").length, total: subs.length });
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r) => ({ status: r.reason?.statusCode ?? null, message: String(r.reason?.message ?? "push failed").slice(0, 160) }));
+  if (failures.length) console.error("push delivery failures", failures);
+  return json({ sent: results.filter((r) => r.status === "fulfilled").length, total: subs.length, failures });
 });

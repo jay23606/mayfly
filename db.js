@@ -102,9 +102,9 @@ const db = {
     // ---- web push (1:1 messages + calls) ----
     // Subscriptions are keyed by browser endpoint; the Edge Function reads them (service role)
     // to send "you have something" pushes. Content never leaves the client.
-    savePushSub: (sub) => sb.from('mf_push_subscriptions')
-        .upsert({ user_id: state.me.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, { onConflict: 'endpoint' }),
-    delPushSub: (endpoint) => sb.from('mf_push_subscriptions').delete().eq('endpoint', endpoint),
+    claimPushSub: (sub) => sb.rpc('mf_claim_push_subscription', { push_endpoint: sub.endpoint, push_p256dh: sub.p256dh, push_auth: sub.auth }),
+    releasePushSub: (endpoint) => sb.rpc('mf_release_push_subscription', { push_endpoint: endpoint }),
+    hasPushSub: (endpoint) => sb.from('mf_push_subscriptions').select('id', { count: 'exact', head: true }).eq('endpoint', endpoint),
     // a 1:1 call has no DB row of its own; this transient row is only a push trigger
     ringCall: (callee_id, kind) => sb.from('mf_call_rings').insert({ caller_id: state.me.id, callee_id, kind }).select('id').maybeSingle(),
     delRing: (id) => sb.from('mf_call_rings').delete().eq('id', id),

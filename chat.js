@@ -21,6 +21,7 @@ let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
 let openUsername = 'friend';
+window.addEventListener('mf-activity-updated',()=>{if(!openUid||!threadBox)return;const n=threadBox.querySelector('.friendactivity');if(n)n.textContent=activityText(openUid,'active now');});
 let threadBox = null, convBox = null;
 let setReplyDraft = () => {};
 // A realtime INSERT and a catch-up query can legitimately see the same row. Keep
@@ -370,7 +371,7 @@ export const openConversation = async (box, uid) => {
         <div class="thead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
           ${avatarHTML(username, prof?.avatar)}
-          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> ${activityText(uid,'active now')}</div></div>
+          <div class="who"><b>${esc(username)}</b><div class="sub"><i class="cdot" style="opacity:${isOnline(uid) ? '1' : '.3'}"></i> <span class="friendactivity">${activityText(uid,'active now')}</span></div></div>
           <button class="icon callbtn" aria-label="Call">${icon('phone')}</button>
           <button class="icon chatmore" aria-label="Chat options">${icon('more')}</button>
           <div class="headmenu" hidden><button type="button" class="clearthread">Clear chat on this device</button></div>

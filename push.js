@@ -36,20 +36,31 @@ export const registerSW = async () => {
 // Boot path: if the user has already granted permission, make sure a live subscription is on
 // file (push endpoints rotate, so re-subscribe + upsert each start). Never prompts on its own.
 export const initPush = async () => {
-    if (!pushPreference() || !VAPID_PUBLIC_KEY || !supported() || Notification.permission !== 'granted') return;
+    if (!pushPreference() || !VAPID_PUBLIC_KEY || !supported() || Notification.permission !== 'granted') return false;
     const reg = swReady || await registerSW();
-    if (!reg) return;
+    if (!reg) return false;
     try {
         let sub = await reg.pushManager.getSubscription();
         // A VAPID rotation invalidates the old subscription. Replace it rather than
         // silently re-saving an endpoint bound to the previous application key.
         if (sub && !matchesCurrentVapidKey(sub)) {
-            db.delPushSub(sub.endpoint).then(() => {}, () => {});
+            await db.releasePushSub(sub.endpoint);
             await sub.unsubscribe(); sub = null;
         }
         sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY) });
-        db.savePushSub(subToRow(sub)).then(() => {}, () => {});
-    } catch (e) {}
+        const { error } = await db.claimPushSub(subToRow(sub));
+        if (error) throw error;
+        return true;
+    } catch (e) { console.warn('[mayfly] push registration failed', e); return false; }
+};
+
+export const pushRegistrationActive = async () => {
+    if (!pushPreference() || !supported() || Notification.permission !== 'granted') return false;
+    try { const reg=swReady||await registerSW(),sub=await reg?.pushManager.getSubscription();if(!sub)return false;const {count,error}=await db.hasPushSub(sub.endpoint);return !error&&count===1; } catch(e){return false;}
+};
+
+export const releasePushForCurrentUser = async () => {
+    if(!supported())return;try{const reg=swReady||await registerSW(),sub=await reg?.pushManager.getSubscription();if(sub)await db.releasePushSub(sub.endpoint);}catch(e){}
 };
 
 // Gesture path (wire to a "Turn on notifications" button — required on iOS, which only grants
@@ -60,8 +71,7 @@ export const enablePush = async () => {
     if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch (e) { return false; } }
     if (perm !== 'granted') return false;
     localStorage.setItem(PUSH_PREF_KEY, 'on');
-    await initPush();
-    return true;
+    return await initPush();
 };
 
 // Unsubscribing is device-local: other browsers signed into Mayfly keep their own
@@ -73,7 +83,7 @@ export const disablePush = async () => {
         const reg = swReady || await registerSW();
         const sub = await reg?.pushManager.getSubscription();
         if (sub) {
-            db.delPushSub(sub.endpoint).then(() => {}, () => {});
+            await db.releasePushSub(sub.endpoint);
             await sub.unsubscribe();
         }
     } catch (e) {}

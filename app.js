@@ -2,7 +2,7 @@ import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, 
     safeMediaUrl, state, presenceUsers, isOnline, setFriendActivity, activityText, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
-import { initPush, registerSW, enablePush, disablePush, pushPreference } from './push.js';
+import { initPush, registerSW, enablePush, disablePush, pushPreference, pushRegistrationActive, releasePushForCurrentUser } from './push.js';
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
@@ -31,10 +31,10 @@ window.visualViewport?.addEventListener('resize', syncVisualViewport);
 window.visualViewport?.addEventListener('scroll', syncVisualViewport);
 
 // ===================== presence =====================
-let presenceCh = null;
+let presenceCh = null, activityCh = null;
 let activityTimer = null, lastActivityWrite = 0;
 const touchActivity = (force = false) => { if(!state.me||(!force&&Date.now()-lastActivityWrite<55_000))return;lastActivityWrite=Date.now();db.touchActivity().then(()=>{},()=>{}); };
-const refreshFriendActivity = async () => { const {data}=await db.friendActivity();setFriendActivity(data||[]); };
+const refreshFriendActivity = async (rerender=false) => { const {data}=await db.friendActivity();setFriendActivity(data||[]);window.dispatchEvent(new CustomEvent('mf-activity-updated'));if(rerender&&$('#friendlist'))renderFriends(); };
 const startPresence = () => {
     presenceCh = sb.channel('mayfly-presence', { config: { presence: { key: state.me.id } } });
     presenceCh.on('presence', { event: 'sync' }, () => {
@@ -48,6 +48,7 @@ const startPresence = () => {
         if (status === 'SUBSCRIBED') { await presenceCh.track({ user_id: state.me.id, username: state.profile.username });touchActivity(true);refreshFriendActivity().then(()=>{},()=>{}); }
     });
     clearInterval(activityTimer);activityTimer=setInterval(()=>touchActivity(),60_000);
+    activityCh=sb.channel('mayfly-friend-activity').on('postgres_changes',{event:'*',schema:'public',table:'mf_user_activity'},()=>refreshFriendActivity(true)).subscribe();
 };
 
 // A service worker cannot hold a Realtime websocket open while the operating
@@ -907,7 +908,7 @@ const viewMe = () => {
         if (!supported) pushStatus.textContent = 'Notifications are not supported by this browser.';
         else if (!pushPreference()) pushStatus.textContent = 'Off on this device.';
         else if (Notification.permission === 'denied') pushStatus.textContent = 'Blocked in browser settings.';
-        else if (Notification.permission === 'granted') pushStatus.textContent = 'On for 1:1 messages and calls.';
+        else if (Notification.permission === 'granted') { pushStatus.textContent='Checking this device…';pushRegistrationActive().then(active=>{if($('#pushstatus'))pushStatus.textContent=active?'On for 1:1 messages and calls.':'Permission granted, but this device is not registered. Toggle off and on to repair.';}); }
         else pushStatus.textContent = 'Tap the switch to enable notifications.';
     };
     refreshPushToggle();
@@ -962,7 +963,7 @@ const viewMe = () => {
         search.oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(showUsers, 220); };
         results.innerHTML = `<div class="muted tiny">Type at least two characters.</div>`;
     }
-    $('#mout').onclick = async () => { stopStream(); await sb.auth.signOut(); };
+    $('#mout').onclick = async () => { stopStream();await releasePushForCurrentUser();await sb.auth.signOut(); };
 };
 
 const viewPublicProfile = async (uid) => {

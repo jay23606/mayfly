@@ -74,10 +74,11 @@ const db = {
     myExpiredRelayPayloads: () => sb.from('mf_relay_payloads').select('id').eq('sender_id', state.me.id).lt('expires_at', new Date().toISOString()),
     delRelayPayloads: (ids) => sb.from('mf_relay_payloads').delete().in('id', ids),
     pendingTransfersTo: (recipient_id) => sb.rpc('mf_pending_relay_count', { other_id: recipient_id }).then(({ data, error }) => ({ count: Number(data || 0), error })),
-    addTransferDelivery: (row) => sb.from('mf_transfer_deliveries').insert(row),
+    addTransferDelivery: (rows) => sb.from('mf_transfer_deliveries').insert(rows),
     incomingTransfers: () => sb.from('mf_transfer_deliveries').select('*').eq('recipient_id', state.me.id)
         .or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`).gt('expires_at', new Date().toISOString()).order('created_at'),
     delTransferDelivery: (id) => sb.from('mf_transfer_deliveries').delete().eq('id', id),
+    completeTransfer: (id) => sb.rpc('mf_complete_transfer', { delivery_id: id, device_id: state.deviceId }),
 
     // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
     // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,

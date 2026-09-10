@@ -652,6 +652,7 @@ const relayDownload = async (path, onProgress) => {
 };
 export const receiveRelayTransfer = async (row) => {
     if (!row || row.recipient_id !== state.me.id) return;
+    if (row.recipient_device_id && row.recipient_device_id !== state.deviceId) return;
     try {
         const { data: relay } = await db.relayPayload(row.relay_id);
         if (!relay) return;
@@ -661,9 +662,8 @@ export const receiveRelayTransfer = async (row) => {
         const data = await blobToDataURL(media);
         const m = { kind: 'media', me: false, name: row.name, mime: row.mime, mediaKind: row.media_kind, data, at: new Date(row.created_at).getTime(), relay: true };
         await histPush(row.sender_id, m);
-        try { await sb.storage.from(SNAP_BUCKET).remove([row.relay_id]); } catch (e) {}
-        try { await db.delRelayPayloads([row.relay_id]); } catch (e) {}
-        await db.delTransferDelivery(row.id);
+        const { data: completed, error: completeError } = await db.completeTransfer(row.id);
+        if (completeError || !completed) throw completeError || new Error('transfer completion was not accepted');
         if (openUid === row.sender_id) renderThreadBody(row.sender_id); else { unreadMsg.add(row.sender_id); onChange(); }
         if (convBox) renderConvs(convBox, openUid);
     } catch (e) { console.error('[mayfly] relay transfer receive failed', e); }
@@ -899,17 +899,20 @@ const mediaBubble = (m, cls) => {
 const relayFile = async (uid, file, kind, meta, dataUrl) => {
     const [{ count }, { data: devices }] = await Promise.all([db.pendingTransfersTo(uid), db.devicesForUser(uid)]);
     if ((count || 0) >= TRANSFER_RELAY_LIMIT) return appendBubble(`(relay queue full — ${TRANSFER_RELAY_LIMIT} pending items for this person)`, 'sys');
-    const device = (devices || []).find(d => d.pubkey);
-    if (!device) return appendBubble('(recipient has no encryption key yet)', 'sys');
-    const relayId = crypto.randomUUID(), deliveryId = crypto.randomUUID(), expires_at = new Date(Date.now() + TRANSFER_TTL_MS).toISOString();
+    const recipients = (devices || []).map(device => { try { return { ...device, key: JSON.parse(device.pubkey) }; } catch (e) { return null; } }).filter(Boolean);
+    if (!recipients.length) return appendBubble('(recipient has no encryption key yet)', 'sys');
+    const relayId = crypto.randomUUID(), logicalId = crypto.randomUUID(), expires_at = new Date(Date.now() + TRANSFER_TTL_MS).toISOString();
     try {
         const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(await file.arrayBuffer());
-        const wrapped = await wrapSharedRelayKey(JSON.parse(device.pubkey), rawKey);
         const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv, mime: file.type || 'application/octet-stream', expires_at });
         if (payloadError) throw payloadError;
         const upload = await sb.storage.from(SNAP_BUCKET).upload(relayId, new Blob([ciphertext]), { contentType: 'application/octet-stream' });
         if (upload.error) throw upload.error;
-        const { error } = await db.addTransferDelivery({ id: deliveryId, relay_id: relayId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, name: meta.name, mime: meta.mime, media_kind: kind, bytes: file.size, wrapped_key: wrapped.wrapped_key, iv: wrapped.iv, eph_pub: wrapped.eph_pub, expires_at });
+        const rows = await Promise.all(recipients.map(async device => {
+            const wrapped = await wrapSharedRelayKey(device.key, rawKey);
+            return { id: crypto.randomUUID(), logical_id: logicalId, relay_id: relayId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, name: meta.name, mime: meta.mime, media_kind: kind, bytes: file.size, wrapped_key: wrapped.wrapped_key, iv: wrapped.iv, eph_pub: wrapped.eph_pub, expires_at };
+        }));
+        const { error } = await db.addTransferDelivery(rows);
         if (error) throw error;
         await histPush(uid, { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now(), relay: true });
         if (openUid === uid) renderThreadBody(uid);

@@ -16,7 +16,7 @@ const ICE = { iceServers: [
 
 const CHUNK = 16 * 1024;
 const drain = (dc) => new Promise(res => { const t = () => (dc.bufferedAmount > (1 << 20) ? setTimeout(t, 20) : res()); t(); });
-const sendBinary = async (dc, buf) => { for (let o = 0; o < buf.byteLength; o += CHUNK) { try { dc.send(buf.slice(o, o + CHUNK)); } catch (e) { return; } await drain(dc); } };
+const sendBinary = async (dc, buf, offset = 0) => { for (let o = offset; o < buf.byteLength; o += CHUNK) { try { dc.send(buf.slice(o, o + CHUNK)); } catch (e) { return false; } await drain(dc); } return true; };
 
 let signalCh = null;
 let onDataConn = null, onMediaConn = null;
@@ -202,8 +202,9 @@ const startRtc = (dmHandler, callHandler, groupDataHandler) => new Promise((reso
             const blob = full instanceof Blob ? full : await (await fetch(full)).blob();
             const mime = blob.type || 'image/jpeg';
             const buf = await blob.arrayBuffer();
-            c.send({ type: 'meta', id: d.id, bytes: buf.byteLength, mime });
-            await sendBinary(c.dataChannel, buf);
+            const offset = Math.min(buf.byteLength, Math.max(0, Number(d.offset) || 0));
+            c.send({ type: 'meta', id: d.id, bytes: buf.byteLength, mime, offset });
+            if (!await sendBinary(c.dataChannel, buf, offset)) return;
             c.send({ type: 'done', id: d.id });
         });
     };
@@ -215,9 +216,9 @@ const startRtc = (dmHandler, callHandler, groupDataHandler) => new Promise((reso
 // Pull a snap/story's full image from the (online) author's browser. A video can
 // take substantially longer than a photo, so the timeout is reset by every chunk
 // of progress rather than expiring after one fixed transfer-wide deadline.
-const fetchSnapOnce = (id, authorId, authorDeviceId = null, onProgress = null) => new Promise((resolve) => {
-    let done = false, mime = 'image/jpeg', expectedBytes = 0, receivedBytes = 0, sawDone = false, timer = null;
-    const parts = [];
+const fetchSnapOnce = (id, authorId, authorDeviceId = null, onProgress = null, transfer = null) => new Promise((resolve) => {
+    const state = transfer || { mime: 'image/jpeg', expectedBytes: 0, receivedBytes: 0, parts: [] };
+    let done = false, sawDone = false, timer = null;
     const c = peer.connect(authorId, { targetDeviceId: authorDeviceId });
     onProgress?.({ phase: 'Connecting', received: 0, total: 0 });
     const armTimeout = (ms = 30000) => { clearTimeout(timer); timer = setTimeout(() => finish(null), ms); };
@@ -229,28 +230,28 @@ const fetchSnapOnce = (id, authorId, authorDeviceId = null, onProgress = null) =
         resolve(value);
     };
     const completeIfReady = () => {
-        if (sawDone && (!expectedBytes || receivedBytes >= expectedBytes)) {
-            finish(URL.createObjectURL(new Blob(parts, { type: mime })));
+        if (sawDone && (!state.expectedBytes || state.receivedBytes >= state.expectedBytes)) {
+            finish(URL.createObjectURL(new Blob(state.parts, { type: state.mime })));
         }
     };
     armTimeout(); // Covers signaling and opening the data channel.
-    c.on('open', () => { onProgress?.({ phase: 'Requesting', received: 0, total: 0 }); c.send({ type: 'want', id }); });
+    c.on('open', () => { onProgress?.({ phase: state.receivedBytes ? 'Resuming' : 'Requesting', received: state.receivedBytes, total: state.expectedBytes }); c.send({ type: 'want', id, offset: state.receivedBytes }); });
     c.on('data', (d) => {
         if (!d || d.id !== id) return;
         if (d.type === 'miss') return finish(null);
         if (d.type === 'meta') {
-            mime = d.mime || 'image/jpeg';
-            expectedBytes = Math.max(0, Number(d.bytes) || 0);
-            onProgress?.({ phase: 'Downloading', received: receivedBytes, total: expectedBytes });
+            state.mime = d.mime || 'image/jpeg';
+            state.expectedBytes = Math.max(0, Number(d.bytes) || 0);
+            onProgress?.({ phase: 'Downloading', received: state.receivedBytes, total: state.expectedBytes });
             return armTimeout();
         }
         if (d.type === 'done') { sawDone = true; completeIfReady(); }
     });
     c.on('chunk', (ab) => {
         if (!ab) return;
-        parts.push(ab);
-        receivedBytes += ab.byteLength || 0;
-        onProgress?.({ phase: 'Downloading', received: receivedBytes, total: expectedBytes });
+        state.parts.push(ab);
+        state.receivedBytes += ab.byteLength || 0;
+        onProgress?.({ phase: 'Downloading', received: state.receivedBytes, total: state.expectedBytes });
         armTimeout();
         completeIfReady();
     });
@@ -261,12 +262,13 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const fetchSnap = async (id, authorId, authorDeviceId = null, onProgress = null) => {
     if (fullCache.has(id)) return fullCache.get(id);
     if (!authorId) return null;
-    // A WebRTC data channel can occasionally close during ICE negotiation. Retry
-    // once automatically before making the person tap the Snap again.
-    for (let attempt = 0; attempt < 2; attempt++) {
-        const full = await fetchSnapOnce(id, authorId, authorDeviceId, onProgress);
+    // Preserve received chunks across reconnects and request only the remaining
+    // byte range. Three connection attempts cover brief mobile network changes.
+    const transfer = { mime: 'image/jpeg', expectedBytes: 0, receivedBytes: 0, parts: [] };
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const full = await fetchSnapOnce(id, authorId, authorDeviceId, onProgress, transfer);
         if (full) { fullCache.set(id, full); return full; }
-        if (attempt === 0) await wait(350);
+        if (attempt < 2) await wait(350 * (attempt + 1));
     }
     return null;
 };

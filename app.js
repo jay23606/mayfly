@@ -6,13 +6,13 @@ import { initPush, registerSW, enablePush, disablePush, pushPreference, pushRegi
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations, receiveRelayTransfer } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 import { viewClips, closeClips } from './clips.js';
 import { saveMemory, viewMemories, closeMemories } from './memories.js';
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
-const RELAY_LIMIT = 3;       // hard ceiling on a user's outstanding encrypted relay payloads (each may be any size)
+const RELAY_LIMIT = 10;      // outstanding encrypted relay items allowed per sender/recipient pair
 const RELAY_TTL_DAYS = 7;    // an offline snap self-destructs a week after it's sent if never opened
 // The database RPC below independently verifies this immutable auth-user ID.
 // This client check only controls whether the management UI is shown.
@@ -460,7 +460,7 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
     const result = { sent: [], blocked: 0, toomany: 0 };
     const checked = await Promise.all(targets.map(async (u) => {
         const { count } = await db.pendingRelayTo(u.id);
-        if (count && count >= 1) return { u, ok: false, blocked: true };
+        if (count && count >= RELAY_LIMIT) return { u, ok: false, toomany: true };
         const { data } = await db.devicesForUser(u.id);
         const devices = (data || []).map(device => {
             try { return { id: device.id, pubkey: JSON.parse(device.pubkey) }; } catch (e) { return null; }
@@ -472,10 +472,8 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
     }));
     const recipients = checked.filter(item => item.ok);
     result.blocked = checked.filter(item => item.blocked).length;
+    result.toomany = checked.filter(item => item.toomany).length;
     if (!recipients.length) return result;
-
-    const [{ count: legacy }, { count: shared }] = await Promise.all([db.pendingLegacyRelayTotal(), db.pendingSharedRelayTotal()]);
-    if ((legacy || 0) + (shared || 0) >= RELAY_LIMIT) { result.toomany = recipients.length; return result; }
 
     const id = uuid();
     const expires_at = new Date(Date.now() + RELAY_TTL_DAYS * 24 * 3600 * 1000).toISOString();
@@ -1063,6 +1061,7 @@ const startRealtime = () => {
       .subscribe();
     sb.channel('mayfly-messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_messages', filter: `recipient_id=eq.${state.me.id}` }, (payload) => onMessageInsert(payload.new))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mf_transfer_deliveries', filter: `recipient_id=eq.${state.me.id}` }, (payload) => receiveRelayTransfer(payload.new))
       // my sent message was ingested by the recipient (row deleted) → blue "Delivered" receipt
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.message_id || payload.old.id); })
       // The first inbox query can finish before this websocket is subscribed. A

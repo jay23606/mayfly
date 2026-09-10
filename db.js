@@ -48,10 +48,7 @@ const db = {
         .eq('recipient_id', state.me.id).or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`).is('viewed_at', null).gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false }),
     // pending (unopened) relay snaps I've sent to one recipient — for the offline cap
-    pendingRelayTo: (recipient_id) => sb.from('mf_snaps')
-        .select('id', { count: 'exact', head: true })
-        .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
-        .like('delivery', 'relay%').is('viewed_at', null).gt('expires_at', new Date().toISOString()),
+    pendingRelayTo: (recipient_id) => sb.rpc('mf_pending_relay_count', { other_id: recipient_id }).then(({ data, error }) => ({ count: Number(data || 0), error })),
     // total unopened, non-expired relay snaps I've sent across all recipients — the hard per-sender cap
     pendingLegacyRelayTotal: () => sb.from('mf_snaps')
         .select('id', { count: 'exact', head: true })
@@ -76,6 +73,11 @@ const db = {
     relayPayload: (id) => sb.from('mf_relay_payloads').select('id, content_iv, mime, expires_at').eq('id', id).maybeSingle(),
     myExpiredRelayPayloads: () => sb.from('mf_relay_payloads').select('id').eq('sender_id', state.me.id).lt('expires_at', new Date().toISOString()),
     delRelayPayloads: (ids) => sb.from('mf_relay_payloads').delete().in('id', ids),
+    pendingTransfersTo: (recipient_id) => sb.rpc('mf_pending_relay_count', { other_id: recipient_id }).then(({ data, error }) => ({ count: Number(data || 0), error })),
+    addTransferDelivery: (row) => sb.from('mf_transfer_deliveries').insert(row),
+    incomingTransfers: () => sb.from('mf_transfer_deliveries').select('*').eq('recipient_id', state.me.id)
+        .or(`recipient_device_id.eq.${state.deviceId},recipient_device_id.is.null`).gt('expires_at', new Date().toISOString()).order('created_at'),
+    delTransferDelivery: (id) => sb.from('mf_transfer_deliveries').delete().eq('id', id),
 
     // ---- messages (async E2E chat; rows are deleted once the recipient decrypts) ----
     // A week's TTL bounds undelivered ciphertext: fresher than that is picked up here,

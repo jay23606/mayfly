@@ -2,7 +2,7 @@ import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFrie
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
-import { encryptText, decryptText, decryptWith, decryptSharedRelay } from './crypto.js';
+import { encryptText, decryptText, decryptWith, decryptSharedRelay, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { browserNotificationsEnabled } from './push.js';
 import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from './callapps.js';
 
@@ -399,8 +399,7 @@ export const openConversation = async (box, uid) => {
     $('.snapbtn', box).onclick = () => { location.hash = '#/snap/' + uid; };
     $('.gifbtn', box).onclick = () => openGifPicker(uid, username);
     const fileInput = $('.fileinput', box);
-    // Files are live-only (no relay) — don't open the picker if it can't be sent.
-    $('.attach', box).onclick = () => isOnline(uid) ? fileInput.click() : appendBubble('(files only send while your friend is online)', 'sys');
+    $('.attach', box).onclick = () => fileInput.click();
     fileInput.onchange = () => { const f = fileInput.files[0]; if (f) sendFile(uid, f, mimeKind(f.type)); fileInput.value = ''; };
     wireMic(box, uid);
     const form = $('.tin', box), input = $('.tinput', box);
@@ -651,6 +650,24 @@ const relayDownload = async (path, onProgress) => {
     }
     return new Blob(chunks, { type: 'application/octet-stream' });
 };
+export const receiveRelayTransfer = async (row) => {
+    if (!row || row.recipient_id !== state.me.id) return;
+    try {
+        const { data: relay } = await db.relayPayload(row.relay_id);
+        if (!relay) return;
+        const blob = await relayDownload(row.relay_id);
+        const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
+        const media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
+        const data = await blobToDataURL(media);
+        const m = { kind: 'media', me: false, name: row.name, mime: row.mime, mediaKind: row.media_kind, data, at: new Date(row.created_at).getTime(), relay: true };
+        await histPush(row.sender_id, m);
+        try { await sb.storage.from(SNAP_BUCKET).remove([row.relay_id]); } catch (e) {}
+        try { await db.delRelayPayloads([row.relay_id]); } catch (e) {}
+        await db.delTransferDelivery(row.id);
+        if (openUid === row.sender_id) renderThreadBody(row.sender_id); else { unreadMsg.add(row.sender_id); onChange(); }
+        if (convBox) renderConvs(convBox, openUid);
+    } catch (e) { console.error('[mayfly] relay transfer receive failed', e); }
+};
 const formatSnapProgress = ({ phase = 'Loading', received = 0, total = 0 }) => {
     if (total > 0) return `${Math.min(100, Math.round(received / total * 100))}%`;
     if (received > 0) return `${(received / 1024 / 1024).toFixed(received >= 1024 * 1024 ? 1 : 2)} MB`;
@@ -815,10 +832,11 @@ const burnSnap = async (s, card) => {
 };
 
 // ===================== live P2P: media, voice, typing =====================
-const MAX_FILE = 20 * 1024 * 1024;
+const TRANSFER_RELAY_LIMIT = 10;
+const TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const blobToDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
-const sendBytes = async (conn, buf) => { const dc = conn?.dataChannel; if (!dc) return; for (let o = 0, i = 0; o < buf.byteLength; o += 16384, i++) { try { dc.send(buf.slice(o, o + 16384)); } catch (e) { return; } if (i % 32 === 0) await drainConn(conn); } };
+const sendBytes = async (conn, buf, offset = 0) => { const dc = conn?.dataChannel; if (!dc) throw new Error('connection unavailable'); for (let o = offset, i = 0; o < buf.byteLength; o += 16384, i++) { if (!conn.open || dc.readyState !== 'open') throw new Error('connection closed'); dc.send(buf.slice(o, o + 16384)); if (i % 32 === 0) await drainConn(conn); } };
 const autoPlaySnapVideo = (video) => {
     if (!video) return;
     const play = () => video.play().catch(() => {
@@ -878,17 +896,42 @@ const mediaBubble = (m, cls) => {
     }
     return bubble;
 };
+const relayFile = async (uid, file, kind, meta, dataUrl) => {
+    const [{ count }, { data: devices }] = await Promise.all([db.pendingTransfersTo(uid), db.devicesForUser(uid)]);
+    if ((count || 0) >= TRANSFER_RELAY_LIMIT) return appendBubble(`(relay queue full — ${TRANSFER_RELAY_LIMIT} pending items for this person)`, 'sys');
+    const device = (devices || []).find(d => d.pubkey);
+    if (!device) return appendBubble('(recipient has no encryption key yet)', 'sys');
+    const relayId = crypto.randomUUID(), deliveryId = crypto.randomUUID(), expires_at = new Date(Date.now() + TRANSFER_TTL_MS).toISOString();
+    try {
+        const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(await file.arrayBuffer());
+        const wrapped = await wrapSharedRelayKey(JSON.parse(device.pubkey), rawKey);
+        const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv, mime: file.type || 'application/octet-stream', expires_at });
+        if (payloadError) throw payloadError;
+        const upload = await sb.storage.from(SNAP_BUCKET).upload(relayId, new Blob([ciphertext]), { contentType: 'application/octet-stream' });
+        if (upload.error) throw upload.error;
+        const { error } = await db.addTransferDelivery({ id: deliveryId, relay_id: relayId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, name: meta.name, mime: meta.mime, media_kind: kind, bytes: file.size, wrapped_key: wrapped.wrapped_key, iv: wrapped.iv, eph_pub: wrapped.eph_pub, expires_at });
+        if (error) throw error;
+        await histPush(uid, { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now(), relay: true });
+        if (openUid === uid) renderThreadBody(uid);
+        if (convBox) renderConvs(convBox, openUid);
+    } catch (e) {
+        console.error('[mayfly] transfer relay failed', e);
+        try { await sb.storage.from(SNAP_BUCKET).remove([relayId]); } catch (cleanupError) {}
+        try { await db.delRelayPayloads([relayId]); } catch (cleanupError) {}
+        appendBubble('(relay send failed)', 'sys');
+    }
+};
 const sendFile = async (uid, file, kind) => {
-    const c = conns.get(uid);
-    if (!(c && c.open)) { ensureConn(uid); return appendBubble('(they need to be online to receive media)', 'sys'); }
-    if (file.size > MAX_FILE) return appendBubble(`(too big — max ${Math.round(MAX_FILE / 1e6)} MB)`, 'sys');
     let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { return appendBubble('(could not read file)', 'sys'); }
     const id = rand(), meta = { name: file.name || kind, mime: file.type, mediaKind: kind };
-    c.sendQ = (c.sendQ || Promise.resolve()).then(async () => {
-        try { const buf = await file.arrayBuffer(); c.send({ t: 'file-meta', id, bytes: buf.byteLength, ...meta }); await sendBytes(c, buf); c.send({ t: 'file-done', id }); }
-        catch (e) { appendBubble('(send failed)', 'sys'); }
-    });
-    await c.sendQ;
+    const buf = await file.arrayBuffer();
+    let sent = false;
+    for (let attempt = 0; attempt < 3 && !sent; attempt++) {
+        let c = conns.get(uid); if (!(c && c.open)) { ensureConn(uid); await new Promise(r => setTimeout(r, 700)); c = conns.get(uid); }
+        if (!(c && c.open)) break;
+        try { sent = await sendP2PTransfer(c, id, buf, meta); } catch (e) { sent = false; }
+    }
+    if (!sent) return relayFile(uid, file, kind, meta, dataUrl);
     const m = { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now() };
     await histPush(uid, m);
     if (openUid === uid) renderThreadBody(uid);
@@ -910,8 +953,6 @@ const wireMic = (box, uid) => {
     const stop = () => { if (rec?.state === 'recording') rec.stop(); };
     const start = async () => {
         if (rec?.state === 'recording' || draft || starting) return;
-        // Voice clips are live-only (no relay) — don't let one be recorded if it can't be sent.
-        if (!isOnline(uid)) return appendBubble('(voice clips only send while your friend is online)', 'sys');
         starting = true; mic.disabled = true;
         try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
         catch (e) { return appendBubble('(microphone blocked)', 'sys'); }
@@ -936,6 +977,19 @@ const wireMic = (box, uid) => {
 };
 
 // P2P data connection for typing + media (text no longer needs it — it's async).
+const incomingTransfers = new Map(), outgoingSignals = new Map();
+const sendP2PTransfer = (conn, id, buf, meta) => new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => { if (settled) return; settled = true; clearTimeout(timeout); if (outgoingSignals.get(id) === handler) outgoingSignals.delete(id); resolve(ok); };
+    const timeout = setTimeout(() => finish(false), 30000);
+    const handler = async (d) => {
+        if (d.t === 'file-resume') { try { await sendBytes(conn, buf, Math.max(0, Number(d.offset) || 0)); conn.send({ t: 'file-done', id }); } catch (e) { finish(false); } }
+        if (d.t === 'file-ack') finish(true);
+    };
+    outgoingSignals.set(id, handler);
+    conn.on('close', () => finish(false));
+    conn.send({ t: 'file-meta', id, bytes: buf.byteLength, ...meta });
+});
 const wire = (uid, conn) => {
     conns.set(uid, conn);
     const rx = {}; let binRx = null;
@@ -945,10 +999,11 @@ const wire = (uid, conn) => {
         if (d.t === 'call-app') { if (!callPeerId || uid === callPeerId) receiveCallApp(d.payload); return; }
         if (d.t === 'typing') { const el2 = $('#ctyping'); if (el2 && openUid === uid) el2.textContent = 'typing…'; return; }
         if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
-        if (d.t === 'file-meta') { binRx = { meta: d, chunks: [] }; return; }
-        if (d.t === 'file-done' && binRx) { const it = binRx; binRx = null; blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(async data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; await histPush(uid, m); if (openUid === uid) renderThreadBody(uid); else { unreadMsg.add(uid); onChange(); } if (convBox) renderConvs(convBox, openUid); }); return; }
+        if (d.t === 'file-resume' || d.t === 'file-ack') { outgoingSignals.get(d.id)?.(d); return; }
+        if (d.t === 'file-meta') { const key = `${uid}:${d.id}`; binRx = incomingTransfers.get(key) || { meta: d, chunks: [], bytes: 0 }; incomingTransfers.set(key, binRx); conn.send({ t: 'file-resume', id: d.id, offset: binRx.bytes }); return; }
+        if (d.t === 'file-done' && binRx) { const it = binRx; if (it.bytes < Number(it.meta.bytes || 0)) { conn.send({ t: 'file-resume', id: d.id, offset: it.bytes }); return; } binRx = null; incomingTransfers.delete(`${uid}:${d.id}`); blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(async data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; await histPush(uid, m); conn.send({ t: 'file-ack', id: d.id }); if (openUid === uid) renderThreadBody(uid); else { unreadMsg.add(uid); onChange(); } if (convBox) renderConvs(convBox, openUid); }); return; }
     });
-    conn.on('chunk', (ab) => { if (binRx) binRx.chunks.push(ab); });
+    conn.on('chunk', (ab) => { if (binRx) { binRx.chunks.push(ab); binRx.bytes += ab.byteLength || 0; } });
     conn.on('close', () => { if (conns.get(uid) === conn) conns.delete(uid); });
     conn.on('error', () => {});
 };
@@ -956,7 +1011,7 @@ const ensureConn = (uid) => { const c = conns.get(uid); if (c && c.open) return;
 export const onIncomingDM = (conn) => { const uid = conn.metadata?.user_id || conn.peer; if (uid) wire(uid, conn); };
 export const reconnectOpenChat = () => { if (openUid) ensureConn(openUid); };
 export const detachAll = () => { openUid = null; threadBox = null; };
-export const bootChat = async () => { await refreshInbox(); await syncMessages(); };
+export const bootChat = async () => { await refreshInbox(); await syncMessages(); const { data } = await db.incomingTransfers(); for (const row of (data || [])) await receiveRelayTransfer(row); };
 
 // ===================== 1:1 calling (video or voice) =====================
 const callAudio = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true }, channelCount: 1 };

@@ -1,3 +1,4 @@
+import { recordingOptions } from './video-media.js';
 import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl, icon,
     safeMediaUrl, state, presenceUsers, isOnline, setFriendActivity, activityText, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
@@ -217,7 +218,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         drawFiltered(c.getContext('2d'), v, activeFilter);
         return c.toDataURL('image/jpeg', 0.5);
     };
-    let holdTimer = null, recorder = null, longPress = false;
+    let holdTimer = null, recorder = null, longPress = false, preparingVideo = false;
     const stopRecording = () => {
         if (recorder?.state === 'recording') recorder.stop();
     };
@@ -226,27 +227,36 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         if (activeFilter !== 'normal') toast('Filters apply to photos; video records unfiltered.');
         const chunks = [];
         const preview = captureVideoPreview();
-        const captureMime = 'video/webm;codecs=vp8,opus';
-        const options = MediaRecorder.isTypeSupported(captureMime) ? { mimeType: captureMime } : undefined;
+        if (recorder || preparingVideo) return;
+        const options = recordingOptions();
+        const captureMime = options?.mimeType || '';
         try { recorder = new MediaRecorder(stream, options); }
         catch (e) { return toast('Could not start video recording.'); }
+        const recording = recorder;
+        let discarded = false;
+        recording.onerror = () => { discarded = true; toast('Recording failed. Please try again.'); };
         recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
         recorder.onstop = async () => {
             shoot.classList.remove('recording');
-            const blob = new Blob(chunks, { type: recorder.mimeType || captureMime });
+            const blob = new Blob(chunks, { type: recording.mimeType || captureMime });
             recorder = null;
-            if (!blob.size) return;
+            if (discarded || !shoot.isConnected) return;
+            if (!blob.size) return toast('The recording was empty. Please try again.');
+            preparingVideo = true; shoot.disabled = true;
             try {
                 const shot = await processVideo(blob);
                 if (preview) shot.preview = preview;
+                if (!shoot.isConnected) { URL.revokeObjectURL(shot.localPreviewUrl); return; }
                 finishShot(shot);
             }
-            catch (e) { toast('Could not prepare that video.'); }
+            catch (e) { toast(e.message || 'Could not prepare that video.'); }
+            finally { preparingVideo = false; shoot.disabled = false; }
         };
-        recorder.start(250);
-        shoot.classList.add('recording');
+        try { recording.start(250); shoot.classList.add('recording'); }
+        catch (e) { recorder = null; toast('Could not start video recording.'); }
     };
     shoot.onpointerdown = (e) => {
+        if (preparingVideo) return;
         e.preventDefault(); shoot.setPointerCapture?.(e.pointerId); longPress = false;
         holdTimer = setTimeout(() => { longPress = true; startRecording(); }, 300);
     };
@@ -262,7 +272,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
     let volumeHeld = false;
     const isVolumeUp = (e) => e.key === 'VolumeUp' || e.key === 'AudioVolumeUp';
     const volumeDown = (e) => {
-        if (!isVolumeUp(e) || volumeHeld) return;
+        if (!isVolumeUp(e) || volumeHeld || preparingVideo) return;
         e.preventDefault(); volumeHeld = true; longPress = false;
         holdTimer = setTimeout(() => { longPress = true; startRecording(); }, 300);
     };
@@ -276,6 +286,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         document.removeEventListener('keydown', volumeDown);
         document.removeEventListener('keyup', volumeUp);
         clearTimeout(holdTimer);
+        if (recorder?.state === 'recording') recorder.stop();
         cancelAnimationFrame(previewFrame);
     };
     startCamera();
@@ -413,8 +424,9 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         // Friends receive an individual Snap; groups receive it in their chat only.
         let targets = list.filter(u => directIds.includes(u.id));
         const selectedGroups = groupList.filter(g => chosenGroups.has(g.id));
-        const offlineTargets = targets.filter(u => !isOnline(u.id));
-        targets = targets.filter(u => isOnline(u.id));
+        // Video must remain downloadable after the sender closes or backgrounds the app.
+        const offlineTargets = targets.filter(u => isVideo || !isOnline(u.id));
+        targets = targets.filter(u => !isVideo && isOnline(u.id));
         let ok = 0, blocked = 0, toomany = 0;
         // A live P2P send that fails still owes the friend a snap, so it joins the relay batch.
         const relayTargets = offlineTargets.slice();
@@ -450,6 +462,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         if (toomany) toast(`You've hit ${RELAY_LIMIT} unopened offline snaps${ok ? ` · sent ${ok}` : ''}. Some couldn't be sent until they're opened or expire.`);
         else if (ok) toast(`Sent 🐛`);
         else if (blocked) toast('Some friends already have an unopened snap from you.');
+        if (!ok) { toast('This Snap was not sent. Please try again.'); refreshSend(); return; }
         releasePreview();
         location.hash = defaultRecipientId ? '#/c/' + defaultRecipientId : (defaultGroupId ? '#/group/' + defaultGroupId : '#/chats');
     };

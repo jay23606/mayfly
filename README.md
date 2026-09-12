@@ -17,6 +17,8 @@ It is intentionally **not serverless**: the static frontend uses Supabase for au
 - **Local Memories** — captured media can be saved, deleted, reused in a chat, or posted to a Story from IndexedDB on the current browser. They are not synced to the server.
 - **Shared call activities** — Chess, Geometry Dash, Metro Rush, Flappy Race, Pac-Man, Pool, Air Hockey, Scrabble, Trivia, Icebreakers, Stack, and Tetris run during 1:1 calls.
 
+New video Snaps use the encrypted relay even when friends are online, so they remain downloadable after the sender closes or backgrounds Mayfly. Recording prefers H.264/AAC MP4 when the browser supports it, with WebM fallback. Photo Snaps continue to use the live P2P path when online.
+
 ## How a Snap travels
 
 | Recipient | Delivery | Where the full media lives |

@@ -1,4 +1,4 @@
-import { sb, state, rand, idb, fullCache } from './core.js';
+import { sb, state, rand, idb } from './core.js';
 
 // ===================== WebRTC over Supabase Realtime (no third-party signaling) =====================
 // Borrowed almost verbatim from instamegle. The offer/answer/ICE handshake rides a
@@ -260,14 +260,13 @@ const fetchSnapOnce = (id, authorId, authorDeviceId = null, onProgress = null, t
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const fetchSnap = async (id, authorId, authorDeviceId = null, onProgress = null) => {
-    if (fullCache.has(id)) return fullCache.get(id);
     if (!authorId) return null;
     // Preserve received chunks across reconnects and request only the remaining
     // byte range. Three connection attempts cover brief mobile network changes.
     const transfer = { mime: 'image/jpeg', expectedBytes: 0, receivedBytes: 0, parts: [] };
     for (let attempt = 0; attempt < 3; attempt++) {
         const full = await fetchSnapOnce(id, authorId, authorDeviceId, onProgress, transfer);
-        if (full) { fullCache.set(id, full); return full; }
+        if (full) return full;
         if (attempt < 2) await wait(350 * (attempt + 1));
     }
     return null;

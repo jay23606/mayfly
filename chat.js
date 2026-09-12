@@ -1,3 +1,4 @@
+import { loadVideoBlob } from './video-media.js';
 import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
 import { isLocationCommand, runLocationCommand, locationLinks } from './location-command.js';
 import { initCallWindow } from './call-window.js';
@@ -766,27 +767,26 @@ const openSnap = async (s, card) => {
         resetProgress();
         return;
     }
-    if (s.logical_id) {
+    const claimForViewing = async () => {
+        if (!s.logical_id) return true;
         const { data: claimed, error } = await db.claimSnap(s.id);
-        if (error || !claimed) {
-            if (full.startsWith('blob:')) URL.revokeObjectURL(full);
-            toast('This Snap was opened on another device.');
-            resetProgress();
-            return;
-        }
-    }
+        if (error || !claimed) { toast(error ? 'Could not open this Snap. Please try again.' : 'This Snap was opened on another device.'); return false; }
+        return true;
+    };
     const video = snapMime(s).startsWith('video/');
     // The default (timer 0) saves the opened media into this device's chat history,
     // then consumes the encrypted/live delivery. It will render inline like any file.
     if (!(Number(s.timer) > 0)) {
         try {
             const blob = await fetch(full).then(r => r.blob());
+            if (video) { const decoded = await loadVideoBlob(blob); decoded.release(); }
             const m = {
                 kind: 'media', me: false, name: video ? 'Video Snap' : 'Photo Snap',
                 mime: snapMime(s), mediaKind: video ? 'video' : 'image',
                 data: await blobToDataURL(blob), caption: s.caption || '', snap: true, snapId: s.id,
                 at: new Date(s.created_at).getTime(),
             };
+            if (!await claimForViewing()) { if (full.startsWith('blob:')) URL.revokeObjectURL(full); resetProgress(); return; }
             await histPush(s.sender_id, m);
             if (full.startsWith('blob:')) URL.revokeObjectURL(full);
             await burnSnap(s, card);
@@ -796,7 +796,8 @@ const openSnap = async (s, card) => {
             }
         } catch (e) {
             console.error('[mayfly] save inline snap', e);
-            toast('Could not save this Snap into the chat.');
+            if (full.startsWith('blob:')) URL.revokeObjectURL(full);
+            toast(e.message || 'Could not save this Snap into the chat.');
             resetProgress();
         }
         return;
@@ -822,8 +823,12 @@ const openSnap = async (s, card) => {
         ov.remove(); release();
         await burnSnap(s, card);
     };
-    const startViewing = () => {
-        if (done || viewing) return;
+    let claiming = false;
+    const startViewing = async () => {
+        if (done || viewing || claiming) return;
+        claiming = true;
+        if (!await claimForViewing()) { fail(); return; }
+        if (done) return;
         viewing = true;
         clearTimeout(loadTimer);
         requestAnimationFrame(() => { const bar = $('.pbar i', ov); if (bar) { bar.style.transitionDuration = s.timer + 's'; bar.classList.add('run'); } });
@@ -847,10 +852,10 @@ const openSnap = async (s, card) => {
         const v = $('video', ov);
         v.preload = 'auto';
         v.onended = finish;
-        v.onloadeddata = startViewing;
+        v.onplaying = startViewing;
         v.onerror = fail;
         v.onclick = (e) => e.stopPropagation();
-        if (v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) startViewing();
+        v.play().catch(() => { /* Native controls let the user start playback. */ });
     } else {
         const im = $('img', ov);
         im.onload = startViewing;

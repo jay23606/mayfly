@@ -1,0 +1,5 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {recordingOptions,waitForVideo} from '../video-media.js';
+test('prefer MP4 when supported and fall back to WebM',()=>{assert.match(recordingOptions({isTypeSupported:t=>t.startsWith('video/mp4')}).mimeType,/mp4/);assert.match(recordingOptions({isTypeSupported:t=>t.startsWith('video/webm')}).mimeType,/webm/);assert.equal(recordingOptions({isTypeSupported:()=>false}),undefined);});
+test('already loaded video does not wait for a missed event',async()=>{const v=new EventTarget();await waitForVideo(v,'loadeddata',()=>true,null,10);});
+test('listeners are registered before loading starts',async()=>{const v=new EventTarget();let ready=false;await waitForVideo(v,'loadeddata',()=>ready,()=>{ready=true;v.dispatchEvent(new Event('loadeddata'));},10);});
+test('decode failure and stalled loading reject',async()=>{const v=new EventTarget();await assert.rejects(waitForVideo(v,'loadeddata',()=>false,()=>v.dispatchEvent(new Event('error')),10),/decoded/);await assert.rejects(waitForVideo(v,'loadeddata',()=>false,null,10),/timed out/);});

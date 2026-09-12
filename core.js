@@ -1,3 +1,4 @@
+import { loadVideoBlob, waitForVideo } from './video-media.js';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { esc, rand, ago, initial, isMediaUrl, safeMediaUrl, chunkString, mimeKind, makeLru, icon } from './util.js';
 
@@ -152,26 +153,20 @@ const makeRelayMedia = async (blob) => {
 // A video snap keeps its original recording and derives a tiny image preview for the inbox.
 const processVideo = async (blob) => {
     const mime = blob.type || 'video/webm';
-    const url = URL.createObjectURL(blob);
-    const localPreviewUrl = URL.createObjectURL(blob);
-    const v = document.createElement('video');
-    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    const { video: v, release } = await loadVideoBlob(blob);
+    let localPreviewUrl;
     try {
-        await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = rej; });
-        // The first recorder frame is commonly black. Seek slightly into the clip before
-        // drawing the still used by the inbox and compose preview.
         if (Number.isFinite(v.duration) && v.duration > 0.1) {
-            v.currentTime = Math.min(0.1, v.duration / 2);
-            await new Promise((res, rej) => { v.onseeked = res; v.onerror = rej; });
-        } else {
-            await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+            const target = Math.min(0.1, v.duration / 2);
+            await waitForVideo(v, 'seeked', () => !v.seeking && Math.abs(v.currentTime - target) < 0.02, () => { v.currentTime = target; });
         }
         const preview = encodePreview(scaleTo(v, PREVIEW_PX), 0.5);
+        localPreviewUrl = URL.createObjectURL(blob);
         return { preview, rawBlob: blob, w: v.videoWidth, h: v.videoHeight, mime, duration: v.duration, localPreviewUrl };
-    } catch (e) {
-        URL.revokeObjectURL(localPreviewUrl);
-        throw e;
-    } finally { URL.revokeObjectURL(url); }
+    } catch (error) {
+        if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+        throw error;
+    } finally { release(); }
 };
 // Avatars are small enough to store in the DB so they always show.
 const AVATAR_PX = 128;

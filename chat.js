@@ -16,7 +16,6 @@ import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from '
 
 const MSG_MAX = 2000;             // max characters per chat message
 const conns = new Map();          // uid -> live P2P data conn (for media/voice/typing)
-const pubCache = new Map();       // uid -> recipient device public keys
 let inboxByUser = {};             // uid -> [unopened snap rows]
 const unreadMsg = new Set();      // uids with messages received while their thread was closed
 let openUid = null;               // conversation currently on screen
@@ -98,7 +97,6 @@ const lastLine = (h) => {
 };
 
 const deviceKeysOf = async (uid) => {
-    if (pubCache.has(uid)) return pubCache.get(uid);
     const { data } = await db.devicesForUser(uid);
     const devices = (data || []).map(device => {
         try { return { id: device.id, pubkey: JSON.parse(device.pubkey) }; } catch (e) { return null; }
@@ -108,7 +106,7 @@ const deviceKeysOf = async (uid) => {
         const { data: profile } = await db.profileById(uid);
         try { if (profile?.pubkey) devices.push({ id: null, pubkey: JSON.parse(profile.pubkey) }); } catch (e) {}
     }
-    pubCache.set(uid, devices); return devices;
+    return devices;
 };
 
 // ---- pull any messages that arrived while we were offline ----
@@ -284,8 +282,10 @@ const clearReceiptsFor = async (uid = null) => {
 };
 export const clearConversation = async (uid) => {
     markCleared(uid); unreadMsg.delete(uid);
-    await histUpdate(uid, history => { history.splice(0, history.length); }).catch(() => {});
-    await idb.del('thread:' + uid).catch(() => {});
+    await histUpdate(uid, history => {
+        const retained = history.filter(entry => isAfterClear(uid, entry.at));
+        history.splice(0, history.length, ...retained);
+    });
     await clearReceiptsFor(uid).catch(() => {});
     if (openUid === uid) await renderThreadBody(uid);
     if (convBox) renderConvs(convBox, openUid);
@@ -295,7 +295,12 @@ export const clearAllLocalConversations = async () => {
     const marks = clearMarks(); marks['*'] = Date.now(); localStorage.setItem(THREAD_CLEAR_KEY, JSON.stringify(marks));
     unreadMsg.clear();
     const keys = await idb.keys();
-    await Promise.all(keys.filter(key => typeof key === 'string' && (key.startsWith('thread:') || key.startsWith('snap-receipt:'))).map(key => idb.del(key)));
+    const uids = new Set([...histWrites.keys(), ...keys.filter(key => typeof key === 'string' && key.startsWith('thread:')).map(key => key.slice(7))]);
+    await Promise.all([...uids].map(uid => histUpdate(uid, history => {
+        const retained = history.filter(entry => isAfterClear(uid, entry.at));
+        history.splice(0, history.length, ...retained);
+    })));
+    await clearReceiptsFor();
     if (openUid) await renderThreadBody(openUid);
     if (convBox) renderConvs(convBox, openUid);
     onChange();
@@ -362,11 +367,9 @@ export const renderConvs = async (box, activeUid) => {
 export const openConversation = async (box, uid) => {
     openUid = uid; threadBox = box;
     unreadMsg.delete(uid); onChange();
-    let username = pubCache.has(uid) ? null : null;
     const [{ data: prof }, { data: activity }] = await Promise.all([db.profileById(uid),db.friendActivity()]);setFriendActivity(activity||[]);
-    username = prof?.username || 'friend';
+    const username = prof?.username || 'friend';
     openUsername = username;
-    if (prof?.pubkey) { try { pubCache.set(uid, JSON.parse(prof.pubkey)); } catch (e) {} }
     box.innerHTML = `<div class="thread">
         <div class="thead">
           <button class="icon back" data-go="#/chats" aria-label="Back">‹</button>
@@ -551,7 +554,6 @@ export const sendText = async (uid, username, text, localEntry = null, options =
         // registry as a new-account setup failure. This keeps every existing friend
         // reachable during the multi-device rollout.
         try {
-            pubCache.delete(uid);
             const { data: profile } = await db.profileById(uid);
             const legacyKey = profile?.pubkey ? JSON.parse(profile.pubkey) : null;
             if (legacyKey) {

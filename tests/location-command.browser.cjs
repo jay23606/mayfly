@@ -1,0 +1,11 @@
+const fs=require('fs');const {chromium}=require('playwright');
+(async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:390,height:844}});
+const chat=fs.readFileSync('chat.js','utf8');const handler=chat.slice(chat.indexOf('    let locating = false;'),chat.indexOf('    input.oninput ='));
+await page.route('https://mayfly.test/**',route=>{if(route.request().url().endsWith('location-command.js'))return route.fulfill({body:fs.readFileSync('location-command.js','utf8'),contentType:'text/javascript'});return route.fulfill({contentType:'text/html',body:`<form><input value="/location"><button>Send</button></form><div class="commandstatus"></div><div id="messages"></div><script type="module">
+import {isLocationCommand,runLocationCommand,locationLinks} from './location-command.js';
+Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition:ok=>setTimeout(()=>ok({coords:{latitude:40,longitude:-75,accuracy:10}}),20)}});
+const box=document,form=document.querySelector('form'),input=document.querySelector('input'),uid='friend',username='Friend',replyBar={hidden:true};let replyDraft=null,openUid=uid;const $=(q,b=document)=>b.querySelector(q),entryId=()=>crypto.randomUUID();window.sends=[];const sendText=async(...args)=>{window.sends.push(args);return true;},histPush=async()=>{},appendEntry=e=>{document.querySelector('#messages').innerHTML=locationLinks(e.text,s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'));};
+${handler}
+</script>`});});
+await page.goto('https://mayfly.test/');await page.locator('button').click();await page.waitForFunction(()=>document.querySelector('.commandstatus').textContent==='Location sent.');
+if(await page.locator('input').inputValue()!=='')throw Error('Draft not cleared');const href=await page.locator('#messages a').getAttribute('href');if(new URL(href).searchParams.get('query')!=='40.000000,-75.000000')throw Error('Wrong link');if(await page.evaluate(()=>sends.length)!==1)throw Error('Duplicate send');console.log('Mobile composer and clickable map passed');await browser.close();})().catch(e=>{console.error(e);process.exit(1)});

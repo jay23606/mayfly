@@ -1,3 +1,4 @@
+import { isLocationCommand, runLocationCommand, locationLinks } from './location-command.js';
 import { initCallWindow } from './call-window.js';
 import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
@@ -384,9 +385,10 @@ export const openConversation = async (box, uid) => {
         <div class="ctyping" id="ctyping"></div>
         <div class="voicepreview" hidden></div>
         <div class="replydraft" id="replydraft" hidden><span></span><button type="button" aria-label="Cancel reply">×</button></div>
+        <div class="commandstatus" role="status" aria-live="polite"></div>
         <form class="tin">
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
-          <input class="tinput" placeholder="Send a chat" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
+          <input class="tinput" placeholder="Message or /location" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
           <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
           <button type="button" class="icon gifbtn" aria-label="GIFs and Stickers"><span class="gifmark">GIF</span></button>
           <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
@@ -414,8 +416,27 @@ export const openConversation = async (box, uid) => {
         $('span', replyBar).textContent = `Replying to: ${replyDraft.text}`; replyBar.hidden = false; input.focus();
     };
     $('button', replyBar).onclick = () => { replyDraft = null; replyBar.hidden = true; };
-    form.onsubmit = (e) => {
-        e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = '';
+    let locating = false;
+    form.onsubmit = async (e) => {
+        e.preventDefault(); const t = input.value.trim(); if (!t || locating) return;
+        if (isLocationCommand(t)) {
+            locating = true; input.disabled = true;
+            const active = () => form.isConnected && openUid === uid;
+            try {
+                const sent = await runLocationCommand({ active,
+                    status: text => { if (active()) $('.commandstatus', box).textContent = text; },
+                    send: async text => {
+                        const entry = { me: true, kind: 'text', text, at: Date.now(), msgId: entryId(), status: 'sent', localId: entryId() };
+                        if (!await sendText(uid, username, text, entry, { keepLocalHistory: false })) return false;
+                        await histPush(uid, entry); if (openUid === uid) appendEntry(entry);
+                        return true;
+                    },
+                });
+                if (sent && active()) { input.value = ''; replyDraft = null; replyBar.hidden = true; }
+            } finally { locating = false; input.disabled = false; }
+            return;
+        }
+        input.value = '';
         const msgId = entryId(), replyTo = replyDraft?.text || '';
         const payload = replyTo ? JSON.stringify({ t: 'chat-reply', text: t, reply: replyTo }) : t;
         replyDraft = null; replyBar.hidden = true;
@@ -520,7 +541,7 @@ const chatTime = (at) => new Date(Number(at) || Date.now()).toLocaleTimeString([
 const textBubble = (uid, e) => {
     const reply = e.replyTo ? `<div class="replyquote">${esc(e.replyTo)}</div>` : '';
     const who = e.me ? 'Me' : openUsername;
-    const card = messageCard(uid, e, el(`<article class="b chattext ${e.me ? 'me' : 'them'}"><div class="chatmeta"><span class="chatsender">${esc(who)}</span><time class="chattime">${chatTime(e.at)}</time></div><div class="chatbody">${reply}${esc(e.text)}</div></article>`));
+    const card = messageCard(uid, e, el(`<article class="b chattext ${e.me ? 'me' : 'them'}"><div class="chatmeta"><span class="chatsender">${esc(who)}</span><time class="chattime">${chatTime(e.at)}</time></div><div class="chatbody">${reply}${locationLinks(e.text, esc)}</div></article>`));
     card.classList.add('textcard');
     return card;
 };

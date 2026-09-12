@@ -1,3 +1,4 @@
+import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
 import { isLocationCommand, runLocationCommand, locationLinks } from './location-command.js';
 import { initCallWindow } from './call-window.js';
 import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
@@ -388,7 +389,7 @@ export const openConversation = async (box, uid) => {
         <div class="commandstatus" role="status" aria-live="polite"></div>
         <form class="tin">
           <button type="button" class="icon snapbtn" aria-label="Send a snap">${icon('camera')}</button>
-          <input class="tinput" placeholder="Message or /location" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
+          <input class="tinput" placeholder="Message or /help" autocomplete="off" enterkeyhint="send" maxlength="2000" aria-label="Message">
           <button type="button" class="icon mic" aria-label="Record a voice note">${icon('mic')}</button>
           <button type="button" class="icon gifbtn" aria-label="GIFs and Stickers"><span class="gifmark">GIF</span></button>
           <button type="button" class="icon attach" aria-label="Attach a file">${icon('paperclip')}</button>
@@ -417,8 +418,30 @@ export const openConversation = async (box, uid) => {
     };
     $('button', replyBar).onclick = () => { replyDraft = null; replyBar.hidden = true; };
     let locating = false;
+    const sendCommandEntry = async (text, entry) => {
+        entry ||= { me: true, kind: 'text', text, at: Date.now(), msgId: entryId(), status: 'sent', localId: entryId() };
+        if (!await sendText(uid, username, text, entry, { keepLocalHistory: false })) return false;
+        await histPush(uid, entry); if (openUid === uid) appendEntry(entry);
+        return true;
+    };
     form.onsubmit = async (e) => {
         e.preventDefault(); const t = input.value.trim(); if (!t || locating) return;
+        const command = parseCommand(t);
+        if (command) {
+            locating = true; input.disabled = true;
+            const active = () => form.isConnected && openUid === uid;
+            try {
+                $('.commandstatus', box).textContent = '';
+                const ok = await runChatCommand(command, { active,
+                    status: text => { if (active()) $('.commandstatus', box).textContent = text; },
+                    searchGif: query => sb.functions.invoke('giphy', { body: { query, type: 'gifs' } }),
+                    sendText: text => sendCommandEntry(text),
+                    sendGif: gif => sendCommandEntry(JSON.stringify({ t: 'gif-share', provider: 'giphy', type: 'gif', url: gif.url, title: gif.title }), { me: true, kind: 'gif', type: 'gif', url: gif.url, title: gif.title, at: Date.now(), msgId: entryId(), localId: entryId(), status: 'sent' }),
+                });
+                if (ok && active()) { input.value = ''; replyDraft = null; replyBar.hidden = true; }
+            } finally { locating = false; input.disabled = false; }
+            return;
+        }
         if (isLocationCommand(t)) {
             locating = true; input.disabled = true;
             const active = () => form.isConnected && openUid === uid;
@@ -1038,6 +1061,7 @@ const ensureConn = (uid) => { const c = conns.get(uid); if (c && c.open) return;
 export const onIncomingDM = (conn) => { const uid = conn.metadata?.user_id || conn.peer; if (uid) wire(uid, conn); };
 export const reconnectOpenChat = () => { if (openUid) ensureConn(openUid); };
 export const detachAll = () => { openUid = null; threadBox = null; };
+applySavedFont();
 export const bootChat = async () => { await refreshInbox(); await syncMessages(); const { data } = await db.incomingTransfers(); for (const row of (data || [])) await receiveRelayTransfer(row); };
 
 // ===================== 1:1 calling (video or voice) =====================

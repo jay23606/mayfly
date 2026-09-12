@@ -464,3 +464,5 @@ main.chats.showthread .threadpane{display:flex}
 #callo.mini .cbar .icon{width:44px;height:44px;min-width:0;padding:10px}
 #callo.mini.voice{height:160px}
 .commandstatus:empty{display:none}.commandstatus{padding:6px 12px;font-size:12px;color:var(--muted);flex-shrink:0}.chatbody a{color:inherit;text-decoration:underline;overflow-wrap:anywhere}
+
+.commandstatus{white-space:pre-line;max-height:35dvh;overflow:auto}

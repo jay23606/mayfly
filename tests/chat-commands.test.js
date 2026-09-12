@@ -1,0 +1,12 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {parseCommand,runChatCommand,SHRUG} from '../chat-commands.js';
+const command = text=>parseCommand(text);
+function env(overrides={}) {return {active:()=>true,status:()=>{},sendText:async()=>true,sendGif:async()=>true,searchGif:async()=>({data:{items:[]}}),font:()=>{},...overrides};}
+test('command arguments and ordinary messages',()=>{assert.deepEqual(command('/GIF happy dance'),{name:'gif',args:'happy dance'});assert.equal(command('hello /gif'),null);assert.equal(command('/gift'),null);assert.deepEqual(command('/font font-family: Georgia;'),{name:'font',args:'font-family: Georgia;'});});
+test('GIF sends first result only',async()=>{const items=[{url:'https://media.giphy.com/first.gif'},{url:'https://media.giphy.com/second.gif'}];let sent;assert.equal(await runChatCommand(command('/gif cats'),env({searchGif:async q=>{assert.equal(q,'cats');return {data:{items}};},sendGif:async gif=>{sent=gif;return true;}})),true);assert.equal(sent.url,items[0].url);});
+for (const response of [{data:{items:[]}},{error:new Error('offline')},{data:{items:[{url:'javascript:alert(1)'}]}}])test('GIF search failure sends nothing',async()=>{let sent=false;assert.equal(await runChatCommand(command('/gif cats'),env({searchGif:async()=>response,sendGif:async()=>{sent=true;return true;}})),false);assert.equal(sent,false);});
+test('GIF lookup finishing after navigation sends nothing',async()=>{let sent=false;assert.equal(await runChatCommand(command('/gif cats'),env({active:()=>false,searchGif:async()=>({data:{items:[{url:'https://media.giphy.com/cat.gif'}]}}),sendGif:async()=>{sent=true;}})),false);assert.equal(sent,false);});
+test('shrug sends expected text',async()=>{let sent;assert.equal(await runChatCommand(command('/shrug'),env({sendText:async text=>{sent=text;return true;}})),true);assert.equal(sent,SHRUG);});
+test('help and font are local commands',async()=>{let sends=0,css;const e=env({sendText:async()=>{sends++;},sendGif:async()=>{sends++;},font:args=>{css=args;}});assert.equal(await runChatCommand(command('/help'),e),true);assert.equal(await runChatCommand(command('/font font-size: 20px;'),e),true);assert.equal(css,'font-size: 20px;');assert.equal(sends,0);});
+test('failed GIF delivery does not report success',async()=>{let status;assert.equal(await runChatCommand(command('/gif cats'),env({searchGif:async()=>({data:{items:[{url:'https://media.giphy.com/cat.gif'}]}}),sendGif:async()=>false,status:text=>status=text})),false);assert.match(status,/Could not send/);});

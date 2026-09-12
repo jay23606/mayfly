@@ -447,3 +447,19 @@ main.chats.showthread .threadpane{display:flex}
   body.inchat main.chats{height:var(--app-vh, 100dvh);padding-top:calc(var(--tab-h) + env(safe-area-inset-top))}
   .toast{bottom:calc(20px + env(safe-area-inset-bottom))}
 }
+
+/* Call navigation stays outside the video and activity layers. */
+.callwindowbar{position:relative;z-index:6;display:flex;align-items:center;gap:8px;padding:max(8px,env(safe-area-inset-top)) 12px 8px;background:#14141e;color:#fff;flex-shrink:0}
+#cdrag{flex:1;min-width:0;font-size:12px;user-select:none;touch-action:none}
+.callwindowbar button{width:44px;height:44px;border:1px solid #ffffff40;border-radius:12px;background:#252535;color:#fff;font-size:24px;cursor:pointer}
+.callwindowbar button[hidden]{display:none}
+#callo.mini{inset:auto;width:min(224px,calc(100vw - 16px));height:min(280px,calc(var(--app-vh,100dvh) - 16px));border:1px solid #ffffff40;border-radius:16px;overflow:hidden;box-shadow:0 8px 35px #0008}
+#callo.mini .callwindowbar{padding:4px 6px;gap:4px}
+#callo.mini #cdrag{cursor:move;font-size:11px}
+#callo.mini .callwindowbar button{width:40px;height:40px}
+#callo.mini .cstat{top:6px;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#callo.mini #lv{width:54px;right:6px;bottom:6px;top:auto;border-radius:8px}
+#callo.mini #callapps,#callo.mini #capps{display:none}
+#callo.mini .cbar{position:relative;padding:6px;gap:8px;background:#14141e;flex-shrink:0}
+#callo.mini .cbar .icon{width:44px;height:44px;min-width:0;padding:10px}
+#callo.mini.voice{height:160px}

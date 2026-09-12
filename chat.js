@@ -1,3 +1,4 @@
+import { initCallWindow } from './call-window.js';
 import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
@@ -1020,13 +1021,17 @@ export const bootChat = async () => { await refreshInbox(); await syncMessages()
 
 // ===================== 1:1 calling (video or voice) =====================
 const callAudio = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true }, channelCount: 1 };
-const getMedia = (video, facing = 'user') => navigator.mediaDevices.getUserMedia({
-    video: video ? { facingMode: { ideal: facing } } : false,
-    // Without these constraints a speakerphone's remote audio can be picked up by
-    // the mic and sent back as an echo, especially on mobile voice calls.
-    audio: callAudio,
-});
+const getMedia = (video, facing = 'user') => {
+    window.dispatchEvent(new Event('call-media-acquiring'));
+    return navigator.mediaDevices.getUserMedia({
+        video: video ? { facingMode: { ideal: facing } } : false,
+        // Reduce speakerphone echo, especially during mobile voice calls.
+        audio: callAudio,
+    });
+};
 let localStream = null, remoteStream = null, curCall = null, callPeerName = '', cameraFacing = 'user', localIsMain = false, callStatusTimer = null, curRingId = null, callPeerId = null, callAmCaller = false;
+// Snap capture borrows these tracks; it must never stop the call's tracks.
+export const callCapture = () => ({ active: !!localStream, stream: localStream?.getVideoTracks().some(t => t.readyState === 'live') ? localStream : null, facing: cameraFacing });
 const callAppOutbox = [];
 const flushCallApps = (uid) => {
     const conn = conns.get(uid);
@@ -1055,7 +1060,9 @@ export const callMenu = (anchor, pick) => {
     setTimeout(() => document.addEventListener('click', onDoc, true), 0);
     m.querySelectorAll('.cmi').forEach(b => b.onclick = () => { close(); pick(b.dataset.v === '1'); });
 };
+const callWindow = initCallWindow({ toast });
 const openCallStage = (video) => {
+    callWindow.reset();
     // This also releases the portrait lock retained by an older installed Mayfly
     // manifest. Browsers that do not implement the API simply keep normal system
     // auto-rotation behaviour.
@@ -1080,6 +1087,7 @@ const renderCallViews = () => {
     main.muted = localIsMain;
     pip.muted = !localIsMain;
     playVideo(main); playVideo(pip);
+    window.dispatchEvent(new Event('call-media-changed'));
 };
 const swapCallViews = () => {
     if (!localStream || !remoteStream || $('#callo').classList.contains('voice')) return;
@@ -1087,6 +1095,7 @@ const swapCallViews = () => {
     renderCallViews();
 };
 const endCall = () => {
+    callWindow.reset();
     clearTimeout(callStatusTimer); callStatusTimer = null;
     if (curRingId) { db.delRing(curRingId).then(() => {}, () => {}); curRingId = null; }
     try { curCall?.close(); } catch (e) {} curCall = null;
@@ -1096,6 +1105,7 @@ const endCall = () => {
     unmountCallApps(); callPeerId = null; callAppOutbox.length = 0;
     setCtl($('#cmute'), true, 'mic', 'micOff'); setCtl($('#ccam'), true, 'video', 'videoOff'); setCtl($('#cflip'), true, 'flipCamera', 'flipCamera');
     $('#callo').classList.remove('on', 'voice');
+    window.dispatchEvent(new Event('call-media-changed'));
 };
 const wireCallMedia = (c) => {
     curCall = c;
@@ -1129,7 +1139,7 @@ export const callUser = async (uid, username, video = true) => {
     if (!isOnline(uid)) return toast(username + ' is offline.');
     if (curCall) return toast('Already in a call.');
     cameraFacing = 'user';
-    try { localStream = await getMedia(video, cameraFacing); } catch (e) { return toast('Camera/mic blocked'); }
+    try { localStream = await getMedia(video, cameraFacing); } catch (e) { window.dispatchEvent(new Event('call-media-changed')); return toast('Camera/mic blocked'); }
     callPeerId = uid; callAmCaller = true; ensureConn(uid);
     callPeerName = username;
     openCallStage(video); $('#callo').classList.add('on'); setStat((video ? 'Calling ' : 'Ringing ') + username + '…');
@@ -1161,7 +1171,7 @@ export const onIncomingCall = (incoming) => {
         }
         cameraFacing = 'user';
         try { localStream = await getMedia(video, cameraFacing); }
-        catch (e) { toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
+        catch (e) { window.dispatchEvent(new Event('call-media-changed')); toast('Camera/mic blocked'); try { incoming.close(); } catch (e2) {} return; }
         callPeerId = incoming.peer; callAmCaller = false;
         openCallStage(video); $('#callo').classList.add('on'); setStat('Connecting…');
         wireCallMedia(incoming);
@@ -1180,8 +1190,9 @@ $('#ccam').onclick = async () => {
     }
     if (!curCall?.addVideoTrack || !localStream) return toast('Camera is unavailable for this call.');
     let camera;
+    window.dispatchEvent(new Event('call-media-acquiring'));
     try { camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing } }, audio: false }); }
-    catch (e) { return toast('Camera blocked or unavailable.'); }
+    catch (e) { window.dispatchEvent(new Event('call-media-changed')); return toast('Camera blocked or unavailable.'); }
     v = camera.getVideoTracks()[0];
     try {
         localStream.addTrack(v);
@@ -1192,10 +1203,11 @@ $('#ccam').onclick = async () => {
         renderCallViews();
     } catch (e) {
         localStream.removeTrack(v); v.stop();
+        window.dispatchEvent(new Event('call-media-changed'));
         toast('Could not turn on video during this call.');
     }
 };
-$('#cflip').onclick = async () => {
+export const flipCallCamera = async () => {
     const oldTrack = localStream?.getVideoTracks()[0];
     if (!oldTrack || !curCall?.replaceVideoTrack) return;
     const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
@@ -1210,6 +1222,7 @@ $('#cflip').onclick = async () => {
         cameraFacing = nextFacing; renderCallViews();
     } catch (e) { newTrack.stop(); toast('Could not switch cameras.'); }
 };
+$('#cflip').onclick = flipCallCamera;
 $('#capps').onclick = toggleCallApps;
 $('#lv').onclick = swapCallViews;
 $('#lv').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); swapCallViews(); } };

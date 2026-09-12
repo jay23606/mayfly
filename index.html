@@ -16,7 +16,8 @@
     <div id="app"></div>
     <div id="toast" class="toast"></div>
     <div id="incall"></div>
-    <div id="callo">
+    <div id="callo" aria-label="Active call">
+      <div class="callwindowbar"><span id="cdrag">Call · drag to move</span><button id="cpip" type="button" aria-label="Open picture-in-picture" title="Picture-in-picture" hidden>▣</button><button id="cmin" type="button" aria-label="Minimize call" title="Minimize call">↙</button></div>
       <div class="stagev">
         <video id="rv" autoplay playsinline></video>
           <video id="lv" autoplay muted playsinline tabindex="0" role="button" aria-label="Swap main and small video"></video>

@@ -6,7 +6,7 @@ import { initPush, registerSW, enablePush, disablePush, pushPreference, pushRegi
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations, receiveRelayTransfer } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations, receiveRelayTransfer, callCapture, flipCallCamera } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 import { viewClips, closeClips } from './clips.js';
 import { saveMemory, viewMemories, closeMemories } from './memories.js';
@@ -100,26 +100,46 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
 });
 
 // ===================== camera-first capture =====================
-let stream = null, facing = 'user';
+let stream = null, facing = 'user', borrowedCamera = false, cameraRequest = 0;
 let cameraInputCleanup = () => {};
-const stopStream = () => { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } };
+const stopStream = () => { cameraRequest++; if (stream && !borrowedCamera) stream.getTracks().forEach(t => t.stop()); stream = null; borrowedCamera = false; };
+window.addEventListener('call-media-acquiring', stopStream);
+window.addEventListener('call-media-changed', () => {
+    if (!$('#cam')) return;
+    const call = callCapture();
+    if (borrowedCamera && stream === call.stream) { facing = call.facing; return; }
+    if (!borrowedCamera && stream && call.active && !call.stream) return;
+    startCamera();
+});
 const startCamera = async () => {
     const v = $('#cam'); if (!v) return;
     stopStream();
+    const request = cameraRequest;
+    const call = callCapture();
+    if (call.stream) {
+        stream = call.stream; borrowedCamera = true; facing = call.facing;
+        v.srcObject = stream; v.play?.().catch(() => {});
+        $('#camerr').textContent = '';
+        return;
+    }
+    let acquired;
     try {
         // Chrome and Edge record the combined stream reliably as WebM (VP8 + Opus).
         // If microphone permission is denied, preserve the working video-only fallback.
         try {
-            stream = await navigator.mediaDevices.getUserMedia({
+            acquired = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: facing },
-                audio: { echoCancellation: true, noiseSuppression: true },
+                audio: call.active ? false : { echoCancellation: true, noiseSuppression: true },
             });
         } catch (audioError) {
-            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+            acquired = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
         }
-        v.srcObject = stream; v.play?.();
+        if (request !== cameraRequest || !v.isConnected) { acquired.getTracks().forEach(t => t.stop()); return; }
+        stream = acquired;
+        v.srcObject = stream; v.play?.().catch(() => {});
         $('#camerr').textContent = '';
     } catch (e) {
+        if (request !== cameraRequest || !v.isConnected) return;
         $('#camerr').innerHTML = 'Camera unavailable. <b>Tap the photo icon</b> to pick from your gallery instead.';
     }
 };
@@ -167,7 +187,7 @@ const viewCamera = (defaultRecipientId = null, groupId = null) => {
         if (activeFilter !== 'normal') previewFrame = requestAnimationFrame(drawLivePreview);
     };
     filter.onchange = updateFilter;
-    $('#flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
+    $('#flip').onclick = () => { if (borrowedCamera) return flipCallCamera(); facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = async () => {
         const f = $('#file').files[0]; if (!f) return;

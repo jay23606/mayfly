@@ -93,6 +93,7 @@ const db = {
         .eq('sender_id', state.me.id).eq('recipient_id', recipient_id)
         .gt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()),
     delMessage: (id) => sb.from('mf_messages').delete().eq('id', id),
+    delMessages: (ids) => sb.from('mf_messages').delete().in('id', ids),
     // undelivered messages I'm party to that are older than a week — GC'd on boot (RLS scopes to me)
     delExpiredMessages: () => sb.from('mf_messages').delete()
         .lt('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()),

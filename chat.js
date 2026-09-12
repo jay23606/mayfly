@@ -1,3 +1,4 @@
+import { createMessageBatcher } from './message-batcher.js';
 import { loadVideoBlob } from './video-media.js';
 import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
 import { isLocationCommand, runLocationCommand, locationLinks } from './location-command.js';
@@ -27,10 +28,6 @@ let openUsername = 'friend';
 window.addEventListener('mf-activity-updated',()=>{if(!openUid||!threadBox)return;const n=threadBox.querySelector('.friendactivity');if(n)n.textContent=activityText(openUid,'active now');});
 let threadBox = null, convBox = null;
 let setReplyDraft = () => {};
-// A realtime INSERT and a catch-up query can legitimately see the same row. Keep
-// one ingestion job per row so that overlap cannot add the same message twice.
-const messageJobs = new Map();
-const handledMessageIds = new Set();
 // Reactions are delivered as small encrypted control messages. In the unusual case
 // that a reaction reaches this device before the message it refers to, keep it long
 // enough to apply when that message is ingested.
@@ -116,9 +113,7 @@ const deviceKeysOf = async (uid) => {
 // ---- pull any messages that arrived while we were offline ----
 export const syncMessages = async () => {
     const { data } = await db.myUndelivered();
-    for (const row of (data || [])) await receiveMessage(row);
-    if (convBox?.isConnected) renderConvs(convBox, openUid);
-    onChange();
+    await receiveMessages(data || []);
 };
 const storyReplyFromPayload = async (text, me = false, at = Date.now(), localPreview = null) => {
     try {
@@ -165,66 +160,66 @@ const repairStoredReactions = (history) => {
     return changed;
 };
 const decodeTitle = (value = '') => { const node = document.createElement('textarea'); node.innerHTML = value; return node.value; };
-const applyIncomingReaction = async (uid, targetId, reaction) => {
-    const applied = await histUpdate(uid, (history) => {
-        const entry = history.find(item => item.msgId === targetId);
-        if (!entry) return false;
-        entry.reaction = reaction;
-        return true;
-    }).catch(() => false);
-    if (!applied) {
-        pendingReactions.set(targetId, reaction);
-        // Do not let an orphaned reaction remain in memory indefinitely.
-        setTimeout(() => pendingReactions.delete(targetId), 2 * 60 * 1000);
+const ingestMessageBatch = async (rows) => {
+    // Decrypt a bounded chunk concurrently; one bad envelope cannot block its peers.
+    const decoded = await Promise.allSettled(rows.map(async row => {
+        const text = await decryptText(state.priv, row.eph_pub, row.iv, row.body);
+        const at = new Date(row.created_at).getTime();
+        const reaction = reactionFromPayload(text);
+        const entry = reaction ? null : await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || gifFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
+        if (entry) { entry.msgId = row.message_id || row.id; entry.deliveryId = row.id; }
+        return { row, entry, reaction, at };
+    }));
+    const byUser = new Map();
+    for (const result of decoded) if (result.status === 'fulfilled') {
+        const item = result.value;
+        if (!byUser.has(item.row.sender_id)) byUser.set(item.row.sender_id, []);
+        byUser.get(item.row.sender_id).push(item);
     }
-    return applied;
-};
-const ingestMessage = async (row) => {
-    let text = ''; try { text = await decryptText(state.priv, row.eph_pub, row.iv, row.body); }
-    catch (e) { return false; }
-    const at = new Date(row.created_at).getTime();
-    const incomingReaction = reactionFromPayload(text);
-    if (incomingReaction) {
-        await applyIncomingReaction(row.sender_id, incomingReaction.targetId, incomingReaction.reaction);
-        await db.delMessage(row.id);
-        if (openUid === row.sender_id) renderThreadBody(row.sender_id, true);
-        return true;
+    const completed = new Set(), newlyUnread = new Set();
+    await Promise.all([...byUser].map(async ([uid, items]) => {
+        items.sort((a,b) => a.at - b.at || a.row.id.localeCompare(b.row.id));
+        let added = false;
+        try {
+            await histUpdate(uid, history => {
+                for (const item of items) {
+                    if (!isAfterClear(uid, item.at)) continue;
+                    if (item.reaction) {
+                        const target = history.find(entry => entry.msgId === item.reaction.targetId);
+                        if (target) target.reaction = item.reaction.reaction;
+                        else { pendingReactions.set(item.reaction.targetId, item.reaction.reaction); if (pendingReactions.size > 500) pendingReactions.delete(pendingReactions.keys().next().value); }
+                    } else if (!history.some(entry => entry.deliveryId === item.row.id || entry.msgId === item.entry.msgId)) {
+                        const reaction = pendingReactions.get(item.entry.msgId);
+                        if (reaction) { item.entry.reaction = reaction; pendingReactions.delete(item.entry.msgId); }
+                        history.push(item.entry); added = true;
+                    }
+                }
+                history.sort((a,b) => a.at - b.at);
+                if (history.length > 300) history.splice(0, history.length - 300);
+            });
+            for (const item of items) completed.add(item.row.id);
+            if (added && openUid !== uid) { unreadMsg.add(uid); newlyUnread.add(uid); }
+        } catch (error) { console.warn('[mayfly] could not save message batch', error); }
+    }));
+    // Acknowledge only envelopes durably saved locally, in one request per chunk.
+    let acknowledged = true;
+    if (completed.size) {
+        try { const {error} = await db.delMessages([...completed]); if (error) { acknowledged = false; console.warn('[mayfly] message batch acknowledgement failed', error); } }
+        catch (error) { acknowledged = false; console.warn('[mayfly] message batch acknowledgement failed', error); }
     }
-    const entry = await storyReplyFromPayload(text, false, at) || replyFromPayload(text, false, at) || gifFromPayload(text, false, at) || clipFromPayload(text, false, at) || { me: false, kind: 'text', text, at };
-    // Both people need the same stable identifier to attach a reaction to a shared
-    // item. The delivery row ID is available to the recipient before it is deleted.
-    entry.msgId = row.message_id || row.id;
-    const queuedReaction = pendingReactions.get(entry.msgId);
-    if (queuedReaction) { entry.reaction = queuedReaction; pendingReactions.delete(entry.msgId); }
-    await histPush(row.sender_id, entry);
-    await db.delMessage(row.id);          // ephemeral: delivered → gone from the server
-    if (openUid === row.sender_id) appendEntry(entry);
-    else { unreadMsg.add(row.sender_id); if (browserNotificationsEnabled()) new Notification('mayfly 🐛', { body: 'New message' }); }
-    return true;
+    if (openUid && byUser.has(openUid)) await renderThreadBody(openUid);
+    if (convBox?.isConnected) await renderConvs(convBox, openUid);
+    if (newlyUnread.size && browserNotificationsEnabled()) {
+        try { new Notification('mayfly 🐛', {body: 'New messages'}); } catch {}
+    }
+    onChange();
+    return acknowledged ? completed : new Set();
 };
-const receiveMessage = (row) => {
-    if (!row?.id || handledMessageIds.has(row.id)) return Promise.resolve(false);
-    if (messageJobs.has(row.id)) return messageJobs.get(row.id);
-    const job = ingestMessage(row).then((done) => {
-        if (done) {
-            handledMessageIds.add(row.id);
-            // Keep enough IDs to protect the short realtime/catch-up overlap
-            // without retaining a message ID for the life of the app.
-            if (handledMessageIds.size > 500) handledMessageIds.delete(handledMessageIds.values().next().value);
-        }
-        return done;
-    }).finally(() => messageJobs.delete(row.id));
-    messageJobs.set(row.id, job);
-    return job;
-};
-// realtime INSERT handler (from app.js)
-export const onMessageInsert = (row) => {
-    if (row.recipient_id !== state.me.id) return;
-    if (row.recipient_device_id && row.recipient_device_id !== state.deviceId) return;
-    receiveMessage(row).then(() => {
-        if (convBox?.isConnected) renderConvs(convBox, openUid);
-        onChange();
-    }).catch((e) => console.warn('[mayfly] could not ingest live message', e));
+const queueMessages = createMessageBatcher(ingestMessageBatch);
+const receiveMessages = rows => queueMessages(rows.filter(row => row.recipient_id === state.me.id && (!row.recipient_device_id || row.recipient_device_id === state.deviceId)));
+// Realtime bursts share the same queue as catch-up, with one render per chunk.
+export const onMessageInsert = row => {
+    receiveMessages([row]).catch(error => console.warn('[mayfly] could not ingest live messages', error));
 };
 
 // ---- a snap arrived for me / I sent one ----
@@ -267,7 +262,11 @@ const snapReceipt = (e) => `<div class="msgstatus me ${e.snapKind || 'photo'} ${
 // Text delivery receipt (blue): a message row is deleted the moment the recipient's
 // device ingests it, so its realtime DELETE tells the sender it was delivered.
 const deliveredMsgIds = new Set();
-export const markMessageDelivered = (id) => { if (!id) return; deliveredMsgIds.add(id); if (openUid) renderThreadBody(openUid); };
+let deliveryRenderTimer = null;
+export const markMessageDelivered = (id) => {
+    if (!id) return; deliveredMsgIds.add(id);
+    if (openUid && !deliveryRenderTimer) deliveryRenderTimer = setTimeout(() => { deliveryRenderTimer = null; if (openUid) renderThreadBody(openUid); }, 30);
+};
 const textReceipt = (delivered) => `<div class="msgstatus me text ${delivered ? 'delivered' : ''}"><span class="si"></span><span class="sl">${delivered ? 'Delivered' : 'Sent'}</span></div>`;
 
 const refreshInbox = async () => {
@@ -471,9 +470,7 @@ export const openConversation = async (box, uid) => {
     ensureConn(uid, username);                     // best-effort live link for typing / media
     // grab any messages this friend sent while we were away
     const { data: pend } = await db.myUndelivered();
-    for (const row of (pend || [])) if (row.sender_id === uid) await receiveMessage(row);
-    renderThreadBody(uid);
-    if (convBox) renderConvs(convBox, uid);
+    await receiveMessages(pend || []);
 };
 
 // Merge local history + unopened snap cards into one chronological timeline.

@@ -470,7 +470,7 @@ export const openConversation = async (box, uid) => {
     ensureConn(uid, username);                     // best-effort live link for typing / media
     // grab any messages this friend sent while we were away
     const { data: pend } = await db.myUndelivered();
-    await receiveMessages(pend || []);
+    await Promise.all([receiveMessages(pend || []), syncTransfers()]);
 };
 
 // Merge local history + unopened snap cards into one chronological timeline.
@@ -682,7 +682,7 @@ const relayDownload = async (path, onProgress) => {
     const total = Math.max(0, Number(response.headers.get('content-length')) || 0);
     if (!response.body?.getReader) {
         const blob = await response.blob();
-        onProgress(blob.size, total || blob.size);
+        onProgress?.(blob.size, total || blob.size);
         return blob;
     }
     const reader = response.body.getReader(), chunks = [];
@@ -691,27 +691,54 @@ const relayDownload = async (path, onProgress) => {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value); received += value.byteLength;
-        onProgress(received, total);
+        onProgress?.(received, total);
     }
     return new Blob(chunks, { type: 'application/octet-stream' });
 };
-export const receiveRelayTransfer = async (row) => {
-    if (!row || row.recipient_id !== state.me.id) return;
-    if (row.recipient_device_id && row.recipient_device_id !== state.deviceId) return;
+const relayTransferJobs = new Map();
+const ingestRelayTransfer = async (row) => {
     try {
-        const { data: relay } = await db.relayPayload(row.relay_id);
-        if (!relay) return;
-        const blob = await relayDownload(row.relay_id);
-        const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
-        const media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
-        const data = await blobToDataURL(media);
-        const m = { kind: 'media', me: false, name: row.name, mime: row.mime, mediaKind: row.media_kind, data, at: new Date(row.created_at).getTime(), relay: true };
-        await histPush(row.sender_id, m);
+        // A failed completion request may leave an already saved envelope queued.
+        const existing = (await histGet(row.sender_id)).some(entry => entry.transferId === row.id);
+        if (!existing) {
+            const { data: relay, error } = await db.relayPayload(row.relay_id);
+            if (error || !relay) throw error || new Error('Relay payload is unavailable');
+            const blob = await relayDownload(row.relay_id);
+            const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
+            const media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
+            const m = { kind: 'media', me: false, name: row.name, mime: media.type, mediaKind: row.media_kind, data: await blobToDataURL(media), at: new Date(row.created_at).getTime(), relay: true, transferId: row.id };
+            await histUpdate(row.sender_id, history => {
+                if (isAfterClear(row.sender_id, m.at) && !history.some(entry => entry.transferId === row.id)) {
+                    history.push(m); history.sort((a,b) => a.at - b.at);
+                    if (history.length > 300) history.splice(0, history.length - 300);
+                }
+            });
+        }
+        // Display the saved clip even if the delivery acknowledgement fails.
+        if (openUid === row.sender_id) await renderThreadBody(row.sender_id);
+        else if (!existing && isAfterClear(row.sender_id, new Date(row.created_at).getTime())) unreadMsg.add(row.sender_id);
+        if (convBox) await renderConvs(convBox, openUid);
+        onChange();
         const { data: completed, error: completeError } = await db.completeTransfer(row.id);
         if (completeError || !completed) throw completeError || new Error('transfer completion was not accepted');
-        if (openUid === row.sender_id) renderThreadBody(row.sender_id); else { unreadMsg.add(row.sender_id); onChange(); }
-        if (convBox) renderConvs(convBox, openUid);
-    } catch (e) { console.error('[mayfly] relay transfer receive failed', e); }
+        return true;
+    } catch (error) { console.error('[mayfly] relay transfer receive failed', error); return false; }
+};
+export const receiveRelayTransfer = row => {
+    if (!row?.id || row.recipient_id !== state.me?.id || row.recipient_device_id && row.recipient_device_id !== state.deviceId) return Promise.resolve(false);
+    if (relayTransferJobs.has(row.id)) return relayTransferJobs.get(row.id);
+    const job = ingestRelayTransfer(row).finally(() => relayTransferJobs.delete(row.id));
+    relayTransferJobs.set(row.id, job); return job;
+};
+let transferSyncJob = null;
+export const syncTransfers = () => {
+    if (transferSyncJob) return transferSyncJob;
+    transferSyncJob = (async () => {
+        const { data, error } = await db.incomingTransfers();
+        if (error) throw error;
+        for (let offset = 0; offset < (data || []).length; offset += 5) await Promise.all(data.slice(offset, offset + 5).map(receiveRelayTransfer));
+    })().finally(() => { transferSyncJob = null; });
+    return transferSyncJob;
 };
 const formatSnapProgress = ({ phase = 'Loading', received = 0, total = 0 }) => {
     if (total > 0) return `${Math.min(100, Math.round(received / total * 100))}%`;
@@ -947,10 +974,11 @@ const mediaBubble = (m, cls) => {
 };
 const relayFile = async (uid, file, kind, meta, dataUrl) => {
     const [{ count }, { data: devices }] = await Promise.all([db.pendingTransfersTo(uid), db.devicesForUser(uid)]);
-    if ((count || 0) >= TRANSFER_RELAY_LIMIT) return appendBubble(`(relay queue full — ${TRANSFER_RELAY_LIMIT} pending items for this person)`, 'sys');
+    if ((count || 0) >= TRANSFER_RELAY_LIMIT) { toast('Voice/file queue is full. Try again after pending items are received.'); return false; }
     const recipients = (devices || []).map(device => { try { return { ...device, key: JSON.parse(device.pubkey) }; } catch (e) { return null; } }).filter(Boolean);
-    if (!recipients.length) return appendBubble('(recipient has no encryption key yet)', 'sys');
+    if (!recipients.length) { toast('Recipient has no registered device yet.'); return false; }
     const relayId = crypto.randomUUID(), logicalId = crypto.randomUUID(), expires_at = new Date(Date.now() + TRANSFER_TTL_MS).toISOString();
+    let queued = false;
     try {
         const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(await file.arrayBuffer());
         const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv, mime: file.type || 'application/octet-stream', expires_at });
@@ -963,19 +991,25 @@ const relayFile = async (uid, file, kind, meta, dataUrl) => {
         }));
         const { error } = await db.addTransferDelivery(rows);
         if (error) throw error;
+        queued = true;
         await histPush(uid, { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now(), relay: true });
         if (openUid === uid) renderThreadBody(uid);
         if (convBox) renderConvs(convBox, openUid);
+        return true;
     } catch (e) {
         console.error('[mayfly] transfer relay failed', e);
+        if (queued) { toast('Clip sent, but could not save your local copy.'); return true; }
         try { await sb.storage.from(SNAP_BUCKET).remove([relayId]); } catch (cleanupError) {}
         try { await db.delRelayPayloads([relayId]); } catch (cleanupError) {}
-        appendBubble('(relay send failed)', 'sys');
+        toast('Clip was not sent. Please try again.');
+        return false;
     }
 };
 const sendFile = async (uid, file, kind) => {
-    let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { return appendBubble('(could not read file)', 'sys'); }
+    let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { toast('Could not read the clip/file.'); return false; }
     const id = rand(), meta = { name: file.name || kind, mime: file.type, mediaKind: kind };
+    // Voice clips must reach every device and survive backgrounding/network changes.
+    if (kind === 'audio') return relayFile(uid, file, kind, meta, dataUrl);
     const buf = await file.arrayBuffer();
     let sent = false;
     for (let attempt = 0; attempt < 3 && !sent; attempt++) {
@@ -1021,7 +1055,12 @@ const wireMic = (box, uid) => {
             tray.hidden = false;
             tray.innerHTML = `<audio src="${safeMediaUrl(draftUrl)}" controls></audio><button type="button" class="vxc" aria-label="Discard voice clip">✕</button><button type="button" class="vsend">Send</button>`;
             $('.vxc', tray).onclick = reset;
-            $('.vsend', tray).onclick = async () => { const clip = draft; reset(); await sendFile(uid, clip, 'audio'); };
+            $('.vsend', tray).onclick = async () => {
+                const button = $('.vsend', tray), clip = draft; button.disabled = true; button.textContent = 'Sending…'; $('.vxc', tray).disabled = true;
+                try { if (await sendFile(uid, clip, 'audio')) { reset(); toast('Voice clip sent.'); } }
+                catch (error) { toast('Voice clip was not sent. Please try again.'); }
+                finally { if (button.isConnected) { button.disabled = false; button.textContent = 'Send'; $('.vxc', tray).disabled = false; } }
+            };
         };
         rec.start(); setRecording(true);
     };
@@ -1064,7 +1103,7 @@ export const onIncomingDM = (conn) => { const uid = conn.metadata?.user_id || co
 export const reconnectOpenChat = () => { if (openUid) ensureConn(openUid); };
 export const detachAll = () => { openUid = null; threadBox = null; };
 applySavedFont();
-export const bootChat = async () => { await refreshInbox(); await syncMessages(); const { data } = await db.incomingTransfers(); for (const row of (data || [])) await receiveRelayTransfer(row); };
+export const bootChat = async () => { await refreshInbox(); await Promise.all([syncMessages(), syncTransfers()]); };
 
 // ===================== 1:1 calling (video or voice) =====================
 const callAudio = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true }, channelCount: 1 };

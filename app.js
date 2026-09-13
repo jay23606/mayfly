@@ -7,7 +7,7 @@ import { initPush, registerSW, enablePush, disablePush, pushPreference, pushRegi
 import { startRtc, fetchSnap } from './rtc.js';
 import { loadOrCreateKeys, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
 import { FILTERS, drawFiltered, filterImageBlob } from './filters.js';
-import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations, receiveRelayTransfer, callCapture, flipCallCamera } from './chat.js';
+import { renderConvs, openConversation, onIncomingDM, onIncomingCall, detachAll, chatUnread, reconnectOpenChat, onMessageInsert, onSnapInsert, noteSentSnap, markSnapDelivered, markSnapOpened, markSnapRemoved, markMessageDelivered, sendStoryReply, sendClipShare, bootChat, syncMessages, clearAllLocalConversations, receiveRelayTransfer, syncTransfers, callCapture, flipCallCamera } from './chat.js';
 import { openGroupById, createGroupFlow, onIncomingGroupCall, onIncomingGroupData, renderGroupList, closeCurrentGroup, bootGroups, sendSnapToGroupChat, clearAllGroupConversations } from './groups.js';
 import { viewClips, closeClips } from './clips.js';
 import { saveMemory, viewMemories, closeMemories } from './memories.js';
@@ -75,6 +75,7 @@ const recoverRealtime = async (forceSocket = false) => {
         db.touchDevice().then(() => {}, () => {});
         touchActivity();refreshFriendActivity().then(()=>{},()=>{});
         syncMessages().then(setChatDot, () => {});
+        syncTransfers().then(setChatDot, () => {});
         reconnectOpenChat();
         clearTimeout(recoveryTimer);
         recoveryTimer = setTimeout(() => {
@@ -1099,7 +1100,7 @@ const startRealtime = () => {
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mf_messages' }, (payload) => { if (payload.old?.id) markMessageDelivered(payload.old.message_id || payload.old.id); })
       // The first inbox query can finish before this websocket is subscribed. A
       // second catch-up here closes that race, which is most visible on mobile.
-      .subscribe((status) => { if (status === 'SUBSCRIBED') syncMessages().catch(() => {}); });
+      .subscribe((status) => { if (status === 'SUBSCRIBED') { syncMessages().catch(() => {}); syncTransfers().catch(() => {}); } });
     sb.channel('mayfly-friends')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mf_friends' }, () => { if ($('#reqs')) { renderRequests(); renderFriends(); } })
       .subscribe();

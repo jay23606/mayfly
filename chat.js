@@ -1,9 +1,10 @@
+import { uploadRelay } from './storage-upload.js';
 import { createMessageBatcher } from './message-batcher.js';
 import { loadVideoBlob } from './video-media.js';
 import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
 import { isLocationCommand, runLocationCommand, locationLinks } from './location-command.js';
 import { initCallWindow } from './call-window.js';
-import { sb, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
+import { sb, SUPABASE_URL, SUPABASE_KEY, SNAP_BUCKET, $, el, esc, rand, toast, state, idb, isOnline, setFriendActivity, activityText, initial, ago,
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
@@ -706,7 +707,7 @@ const ingestRelayTransfer = async (row) => {
             const blob = await relayDownload(row.relay_id);
             const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
             const media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
-            const m = { kind: 'media', me: false, name: row.name, mime: media.type, mediaKind: row.media_kind, data: await blobToDataURL(media), at: new Date(row.created_at).getTime(), relay: true, transferId: row.id };
+            const m = { kind: 'media', me: false, name: row.name, mime: media.type, mediaKind: row.media_kind, data: media, at: new Date(row.created_at).getTime(), relay: true, transferId: row.id };
             await histUpdate(row.sender_id, history => {
                 if (isAfterClear(row.sender_id, m.at) && !history.some(entry => entry.transferId === row.id)) {
                     history.push(m); history.sort((a,b) => a.at - b.at);
@@ -807,7 +808,7 @@ const openSnap = async (s, card) => {
             const m = {
                 kind: 'media', me: false, name: video ? 'Video Snap' : 'Photo Snap',
                 mime: snapMime(s), mediaKind: video ? 'video' : 'image',
-                data: await blobToDataURL(blob), caption: s.caption || '', snap: true, snapId: s.id,
+                data: blob, caption: s.caption || '', snap: true, snapId: s.id,
                 at: new Date(s.created_at).getTime(),
             };
             if (!await claimForViewing()) { if (full.startsWith('blob:')) URL.revokeObjectURL(full); resetProgress(); return; }
@@ -910,7 +911,6 @@ const burnSnap = async (s, card) => {
 // ===================== live P2P: media, voice, typing =====================
 const TRANSFER_RELAY_LIMIT = 10;
 const TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const blobToDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
 const sendBytes = async (conn, buf, offset = 0) => { const dc = conn?.dataChannel; if (!dc) throw new Error('connection unavailable'); for (let o = offset, i = 0; o < buf.byteLength; o += 16384, i++) { if (!conn.open || dc.readyState !== 'open') throw new Error('connection closed'); dc.send(buf.slice(o, o + 16384)); if (i % 32 === 0) await drainConn(conn); } };
 const autoPlaySnapVideo = (video) => {
@@ -938,10 +938,16 @@ const pinThreadAfterMediaLoads = (media) => {
     media.addEventListener('canplay', pin, { once: true });
     if (media instanceof HTMLImageElement && media.complete) pin();
 };
+const mediaObjectUrls = new WeakMap();
+const mediaSourceUrl = data => {
+    if (!(data instanceof Blob)) return safeMediaUrl(data);
+    if (!mediaObjectUrls.has(data)) mediaObjectUrls.set(data, URL.createObjectURL(data));
+    return mediaObjectUrls.get(data);
+};
 const openMediaViewer = (m, inlinePlayer = null) => {
     const video = m.mediaKind === 'video';
     const reusePlayer = video && inlinePlayer;
-    const tag = reusePlayer ? '' : video ? `<video src="${safeMediaUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${safeMediaUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
+    const tag = reusePlayer ? '' : video ? `<video src="${mediaSourceUrl(m.data)}" controls autoplay playsinline></video>` : `<img src="${mediaSourceUrl(m.data)}" alt="${esc(m.name || 'image')}">`;
     const ov = el(`<div class="media-viewer" role="dialog" aria-modal="true"><button class="media-close" aria-label="Close media">✕</button>${tag}</div>`);
     const marker = reusePlayer ? document.createComment('inline video') : null;
     if (reusePlayer) { inlinePlayer.before(marker); ov.appendChild(inlinePlayer); }
@@ -957,7 +963,7 @@ const openMediaViewer = (m, inlinePlayer = null) => {
     if (video) autoPlaySnapVideo(reusePlayer ? inlinePlayer : $('video', ov));
 };
 const mediaBubble = (m, cls) => {
-    const url = safeMediaUrl(m.data);
+    const url = mediaSourceUrl(m.data);
     const inner = m.mediaKind === 'image' ? `<img class="chatmedia" src="${url}" alt="">`
         : m.mediaKind === 'video' ? `<video class="chatmedia" data-snap="${esc(m.snapId || '')}" src="${url}" controls playsinline></video>`
         : m.mediaKind === 'audio' ? `<audio src="${url}" controls></audio>`
@@ -972,7 +978,7 @@ const mediaBubble = (m, cls) => {
     }
     return bubble;
 };
-const relayFile = async (uid, file, kind, meta, dataUrl) => {
+const relayFile = async (uid, file, kind, meta) => {
     const [{ count }, { data: devices }] = await Promise.all([db.pendingTransfersTo(uid), db.devicesForUser(uid)]);
     if ((count || 0) >= TRANSFER_RELAY_LIMIT) { toast('Voice/file queue is full. Try again after pending items are received.'); return false; }
     const recipients = (devices || []).map(device => { try { return { ...device, key: JSON.parse(device.pubkey) }; } catch (e) { return null; } }).filter(Boolean);
@@ -983,7 +989,7 @@ const relayFile = async (uid, file, kind, meta, dataUrl) => {
         const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(await file.arrayBuffer());
         const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv, mime: file.type || 'application/octet-stream', expires_at });
         if (payloadError) throw payloadError;
-        const upload = await sb.storage.from(SNAP_BUCKET).upload(relayId, new Blob([ciphertext]), { contentType: 'application/octet-stream' });
+        const upload = await uploadRelay({ sb, projectUrl: SUPABASE_URL, publishableKey: SUPABASE_KEY, bucket: SNAP_BUCKET, path: relayId, body: ciphertext });
         if (upload.error) throw upload.error;
         const rows = await Promise.all(recipients.map(async device => {
             const wrapped = await wrapSharedRelayKey(device.key, rawKey);
@@ -992,7 +998,7 @@ const relayFile = async (uid, file, kind, meta, dataUrl) => {
         const { error } = await db.addTransferDelivery(rows);
         if (error) throw error;
         queued = true;
-        await histPush(uid, { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now(), relay: true });
+        await histPush(uid, { kind: 'media', me: true, ...meta, data: file, at: Date.now(), relay: true });
         if (openUid === uid) renderThreadBody(uid);
         if (convBox) renderConvs(convBox, openUid);
         return true;
@@ -1006,10 +1012,9 @@ const relayFile = async (uid, file, kind, meta, dataUrl) => {
     }
 };
 const sendFile = async (uid, file, kind) => {
-    let dataUrl; try { dataUrl = await blobToDataURL(file); } catch (e) { toast('Could not read the clip/file.'); return false; }
     const id = rand(), meta = { name: file.name || kind, mime: file.type, mediaKind: kind };
     // Voice clips must reach every device and survive backgrounding/network changes.
-    if (kind === 'audio') return relayFile(uid, file, kind, meta, dataUrl);
+    if (kind === 'audio' || kind === 'video') return relayFile(uid, file, kind, meta);
     const buf = await file.arrayBuffer();
     let sent = false;
     for (let attempt = 0; attempt < 3 && !sent; attempt++) {
@@ -1017,8 +1022,8 @@ const sendFile = async (uid, file, kind) => {
         if (!(c && c.open)) break;
         try { sent = await sendP2PTransfer(c, id, buf, meta); } catch (e) { sent = false; }
     }
-    if (!sent) return relayFile(uid, file, kind, meta, dataUrl);
-    const m = { kind: 'media', me: true, ...meta, data: dataUrl, at: Date.now() };
+    if (!sent) return relayFile(uid, file, kind, meta);
+    const m = { kind: 'media', me: true, ...meta, data: file, at: Date.now() };
     await histPush(uid, m);
     if (openUid === uid) renderThreadBody(uid);
     if (convBox) renderConvs(convBox, openUid);
@@ -1092,7 +1097,7 @@ const wire = (uid, conn) => {
         if (d.t === 'stop') { const el2 = $('#ctyping'); if (el2) el2.textContent = ''; return; }
         if (d.t === 'file-resume' || d.t === 'file-ack') { outgoingSignals.get(d.id)?.(d); return; }
         if (d.t === 'file-meta') { const key = `${uid}:${d.id}`; binRx = incomingTransfers.get(key) || { meta: d, chunks: [], bytes: 0 }; incomingTransfers.set(key, binRx); conn.send({ t: 'file-resume', id: d.id, offset: binRx.bytes }); return; }
-        if (d.t === 'file-done' && binRx) { const it = binRx; if (it.bytes < Number(it.meta.bytes || 0)) { conn.send({ t: 'file-resume', id: d.id, offset: it.bytes }); return; } binRx = null; incomingTransfers.delete(`${uid}:${d.id}`); blobToDataURL(new Blob(it.chunks, { type: it.meta.mime || '' })).then(async data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; await histPush(uid, m); conn.send({ t: 'file-ack', id: d.id }); if (openUid === uid) renderThreadBody(uid); else { unreadMsg.add(uid); onChange(); } if (convBox) renderConvs(convBox, openUid); }); return; }
+        if (d.t === 'file-done' && binRx) { const it = binRx; if (it.bytes < Number(it.meta.bytes || 0)) { conn.send({ t: 'file-resume', id: d.id, offset: it.bytes }); return; } binRx = null; incomingTransfers.delete(`${uid}:${d.id}`); Promise.resolve(new Blob(it.chunks, { type: it.meta.mime || '' })).then(async data => { const m = { kind: 'media', me: false, name: it.meta.name, mime: it.meta.mime, mediaKind: it.meta.mediaKind, data, at: Date.now() }; await histPush(uid, m); conn.send({ t: 'file-ack', id: d.id }); if (openUid === uid) renderThreadBody(uid); else { unreadMsg.add(uid); onChange(); } if (convBox) renderConvs(convBox, openUid); }); return; }
     });
     conn.on('chunk', (ab) => { if (binRx) { binRx.chunks.push(ab); binRx.bytes += ab.byteLength || 0; } });
     conn.on('close', () => { if (conns.get(uid) === conn) conns.delete(uid); });

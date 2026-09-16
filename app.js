@@ -1,5 +1,6 @@
+import { uploadRelay } from './storage-upload.js';
 import { recordingOptions } from './video-media.js';
-import { sb, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl, icon,
+import { sb, SUPABASE_URL, SUPABASE_KEY, SNAP_BUCKET, $, $$, el, esc, app, toast, ago, initial, avatarHTML, isMediaUrl, icon,
     safeMediaUrl, state, presenceUsers, isOnline, setFriendActivity, activityText, processImage, processCanvas, processVideo, makeStoryPreview, makeRelayMedia, makeAvatar,
     idb, dataUrlToBytes } from './core.js';
 import { db } from './db.js';
@@ -448,7 +449,7 @@ const compose = async (shot, defaultRecipientId = null, defaultGroupId = null, i
         }
         if (relayTargets.length) {
             send.textContent = `Preparing one encrypted relay for ${relayTargets.length} friend${relayTargets.length === 1 ? '' : 's'}...`;
-            const relay = await sendSharedRelay(shot, relayTargets, caption, timer);
+            const relay = await sendSharedRelay(shot, relayTargets, caption, timer, (sent,total) => { if (send.isConnected) send.textContent = `Uploading ${Math.round(sent / total * 100)}%…`; });
             relay.sent.forEach(({ uid, id, kind }) => { ok++; noteSentSnap(uid, id, kind); });
             blocked += relay.blocked; toomany += relay.toomany;
         }
@@ -490,7 +491,7 @@ const sendLiveSnap = async (shot, u, caption, secs) => {
 };
 
 // One encrypted media payload, with a small recipient-specific wrapped key per row.
-const sendSharedRelay = async (shot, targets, caption, secs) => {
+const sendSharedRelay = async (shot, targets, caption, secs, onProgress = null) => {
     const result = { sent: [], blocked: 0, toomany: 0 };
     const checked = await Promise.all(targets.map(async (u) => {
         const { count } = await db.pendingRelayTo(u.id);
@@ -519,7 +520,7 @@ const sendSharedRelay = async (shot, targets, caption, secs) => {
         const { error: payloadError } = await db.addRelayPayload({ id, sender_id: state.me.id, content_iv, mime, expires_at });
         if (payloadError) throw payloadError;
         payloadCreated = true;
-        const upload = await sb.storage.from(SNAP_BUCKET).upload(id, new Blob([ciphertext]), { contentType: 'application/octet-stream', upsert: false });
+        const upload = await uploadRelay({ sb, projectUrl: SUPABASE_URL, publishableKey: SUPABASE_KEY, bucket: SNAP_BUCKET, path: id, body: ciphertext, onProgress });
         if (upload.error) throw upload.error;
 
         const rows = await Promise.all(recipients.flatMap(({ u, devices }) => {

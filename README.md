@@ -31,6 +31,7 @@ New video Snaps use the encrypted relay even when friends are online, so they re
 - A sender may have up to **10 logical outgoing relay items per recipient**, shared across photo/video Snaps, files, and voice clips. Device envelopes for the same item count once. The database enforces the limit atomically, including concurrent browser tabs.
 - One ciphertext payload can fan out to multiple people or devices without storing duplicate media. Relay payloads expire after seven days and are removed after all linked device deliveries finish.
 - Mayfly no longer imposes its former 20 MB client-side relay cap. Payloads above 6 MB are encrypted, uploaded, downloaded, and authenticated in bounded 6 MB chunks with TUS retry support, avoiding whole-file memory copies on phones. The configured Supabase Storage global/bucket limit still imposes a practical limit.
+- Direct P2P attachments are read from the selected file in bounded slices, respect WebRTC backpressure, and resume from the recipient's confirmed byte offset without first allocating a whole-file buffer.
 - Live Snaps retain their normal 24-hour delivery window. Group media remains live P2P and does not use the 1:1 relay queue.
 - The backend still handles routing and lifecycle metadata, a tiny Snap preview, and any supplied caption. It does not receive the full live Snap or call-media payload.
 - A recipient can still screenshot, record, or re-share what they receive. Ephemeral delivery is not DRM.

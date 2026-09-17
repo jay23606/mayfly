@@ -1,5 +1,6 @@
 import { downloadChunkedRelay, uploadChunkedRelay, uploadRelay } from './storage-upload.js';
 import { CHUNKED_RELAY_FORMAT, RELAY_PLAIN_CHUNK, createChunkedRelayEncryptor, decryptSharedRelayChunk } from './relay-crypto.js';
+import { sendBlobSlices } from './p2p-file.js';
 import { createMessageBatcher } from './message-batcher.js';
 import { loadVideoBlob } from './video-media.js';
 import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
@@ -929,8 +930,6 @@ const burnSnap = async (s, card) => {
 // ===================== live P2P: media, voice, typing =====================
 const TRANSFER_RELAY_LIMIT = 10;
 const TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const drainConn = async (conn) => { const dc = conn?.dataChannel; if (!dc) return; let g = 0; while (dc.bufferedAmount > 4 * 1024 * 1024 && g++ < 3000) await new Promise(r => setTimeout(r, 30)); };
-const sendBytes = async (conn, buf, offset = 0) => { const dc = conn?.dataChannel; if (!dc) throw new Error('connection unavailable'); for (let o = offset, i = 0; o < buf.byteLength; o += 16384, i++) { if (!conn.open || dc.readyState !== 'open') throw new Error('connection closed'); dc.send(buf.slice(o, o + 16384)); if (i % 32 === 0) await drainConn(conn); } };
 const autoPlaySnapVideo = (video) => {
     if (!video) return;
     const play = () => video.play().catch(() => {
@@ -1045,12 +1044,11 @@ const sendFile = async (uid, file, kind) => {
     const id = rand(), meta = { name: file.name || kind, mime: file.type, mediaKind: kind };
     // Voice clips must reach every device and survive backgrounding/network changes.
     if (kind === 'audio' || kind === 'video') return relayFile(uid, file, kind, meta);
-    const buf = await file.arrayBuffer();
     let sent = false;
     for (let attempt = 0; attempt < 3 && !sent; attempt++) {
         let c = conns.get(uid); if (!(c && c.open)) { ensureConn(uid); await new Promise(r => setTimeout(r, 700)); c = conns.get(uid); }
         if (!(c && c.open)) break;
-        try { sent = await sendP2PTransfer(c, id, buf, meta); } catch (e) { sent = false; }
+        try { sent = await sendP2PTransfer(c, id, file, meta); } catch (e) { sent = false; }
     }
     if (!sent) return relayFile(uid, file, kind, meta);
     const m = { kind: 'media', me: true, ...meta, data: file, at: Date.now() };
@@ -1104,17 +1102,23 @@ const wireMic = (box, uid) => {
 
 // P2P data connection for typing + media (text no longer needs it — it's async).
 const incomingTransfers = new Map(), outgoingSignals = new Map();
-const sendP2PTransfer = (conn, id, buf, meta) => new Promise((resolve) => {
-    let settled = false;
+const sendP2PTransfer = (conn, id, file, meta) => new Promise((resolve) => {
+    let settled = false, timeout = null, sending = null;
+    const armTimeout = () => { clearTimeout(timeout); timeout = setTimeout(() => finish(false), 30000); };
     const finish = (ok) => { if (settled) return; settled = true; clearTimeout(timeout); if (outgoingSignals.get(id) === handler) outgoingSignals.delete(id); resolve(ok); };
-    const timeout = setTimeout(() => finish(false), 30000);
     const handler = async (d) => {
-        if (d.t === 'file-resume') { try { await sendBytes(conn, buf, Math.max(0, Number(d.offset) || 0)); conn.send({ t: 'file-done', id }); } catch (e) { finish(false); } }
+        if (d.t === 'file-resume' && !sending) {
+            armTimeout();
+            sending = sendBlobSlices(conn, file, Math.max(0, Number(d.offset) || 0), { isCancelled: () => settled, onProgress: armTimeout });
+            try { await sending; if (!settled) conn.send({ t: 'file-done', id }); } catch (e) { finish(false); }
+            finally { sending = null; }
+        }
         if (d.t === 'file-ack') finish(true);
     };
     outgoingSignals.set(id, handler);
     conn.on('close', () => finish(false));
-    conn.send({ t: 'file-meta', id, bytes: buf.byteLength, ...meta });
+    armTimeout();
+    conn.send({ t: 'file-meta', id, bytes: file.size, ...meta });
 });
 const wire = (uid, conn) => {
     conns.set(uid, conn);

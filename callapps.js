@@ -2,6 +2,8 @@
 // use the small Appmegle register/mount/onData contract; this host adapts that
 // contract to Mayfly's existing encrypted peer data connection.
 const APP_BASE = 'https://jay23606.github.io/appmegle/';
+const APP_BUILD = 'b9c44e9';
+const appAsset = path => { const url = new URL(path, APP_BASE); url.searchParams.set('v', APP_BUILD); return url.href; };
 const ACTIVITIES = [
     ['chess', 'Chess'], ['geodash', 'Geometry Dash'], ['pacman', 'Pac-Man'],
     ['metrorush', 'Metro Rush'], ['flappy', 'Flappy Race'],
@@ -25,7 +27,7 @@ const loadSound = () => {
     if (window.AppmegleSound) return Promise.resolve();
     if (!soundLoading) soundLoading = new Promise((resolve) => {
         const script = document.createElement('script');
-        script.src = `${APP_BASE}apps/sfx.js`; script.onload = resolve; script.onerror = resolve;
+        script.src = appAsset('apps/sfx.js'); script.onload = resolve; script.onerror = resolve;
         document.head.appendChild(script);
     });
     return soundLoading;
@@ -34,7 +36,7 @@ const loadSound = () => {
 const styleFor = (path, id) => {
     if (!path || document.querySelector(`link[data-call-app="${id}"]`)) return;
     const link = document.createElement('link');
-    link.rel = 'stylesheet'; link.dataset.callApp = id; link.href = new URL(path, APP_BASE).href;
+    link.rel = 'stylesheet'; link.dataset.callApp = id; link.href = appAsset(path);
     document.head.appendChild(link);
 };
 const register = (app) => { apps.set(app.id, app); styleFor(app.css, app.id); };
@@ -46,7 +48,7 @@ const load = (id) => {
     if (!labels.has(id)) return Promise.reject(new Error('Unknown activity'));
     if (!loading.has(id)) loading.set(id, loadSound().then(() => new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = `${APP_BASE}apps/${id}.js`;
+        script.src = appAsset(`apps/${id}.js`);
         script.onload = () => apps.has(id) ? resolve(apps.get(id)) : reject(new Error('Activity did not register'));
         script.onerror = () => reject(new Error('Activity could not load'));
         document.body.appendChild(script);

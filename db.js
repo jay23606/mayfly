@@ -70,7 +70,7 @@ const db = {
     // expired snaps I'm party to (RLS scopes to sender/recipient) → swept on boot: rows + relay blobs
     myExpiredSnaps: () => sb.from('mf_snaps').select('id, delivery, relay_id').lt('expires_at', new Date().toISOString()),
     addRelayPayload: (row) => sb.from('mf_relay_payloads').insert(row),
-    relayPayload: (id) => sb.from('mf_relay_payloads').select('id, content_iv, mime, expires_at').eq('id', id).maybeSingle(),
+    relayPayload: (id) => sb.from('mf_relay_payloads').select('id, content_iv, mime, expires_at, encryption_format, chunk_size, plaintext_size').eq('id', id).maybeSingle(),
     myExpiredRelayPayloads: () => sb.from('mf_relay_payloads').select('id').eq('sender_id', state.me.id).lt('expires_at', new Date().toISOString()),
     delRelayPayloads: (ids) => sb.from('mf_relay_payloads').delete().in('id', ids),
     pendingTransfersTo: (recipient_id) => sb.rpc('mf_pending_relay_count', { other_id: recipient_id }).then(({ data, error }) => ({ count: Number(data || 0), error })),

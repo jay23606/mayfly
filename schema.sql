@@ -145,6 +145,9 @@ create table if not exists public.mf_relay_payloads (
   sender_id  uuid not null references public.mf_profiles(id) on delete cascade,
   content_iv text not null,
   mime       text not null,
+  encryption_format text not null default 'aes-gcm-v1',
+  chunk_size integer,
+  plaintext_size bigint,
   created_at timestamptz not null default now(),
   expires_at timestamptz not null
 );

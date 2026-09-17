@@ -1,4 +1,5 @@
-import { uploadRelay } from './storage-upload.js';
+import { downloadChunkedRelay, uploadChunkedRelay, uploadRelay } from './storage-upload.js';
+import { CHUNKED_RELAY_FORMAT, RELAY_PLAIN_CHUNK, createChunkedRelayEncryptor, decryptSharedRelayChunk } from './relay-crypto.js';
 import { createMessageBatcher } from './message-batcher.js';
 import { loadVideoBlob } from './video-media.js';
 import { parseCommand, runChatCommand, applySavedFont } from './chat-commands.js';
@@ -8,7 +9,7 @@ import { sb, SUPABASE_URL, SUPABASE_KEY, SNAP_BUCKET, $, el, esc, rand, toast, s
     avatarHTML, safeMediaUrl, chunkString, mimeKind, icon } from './core.js';
 import { peer, fetchSnap } from './rtc.js';
 import { db } from './db.js';
-import { encryptText, decryptText, decryptWith, decryptSharedRelay, encryptSharedRelay, wrapSharedRelayKey } from './crypto.js';
+import { encryptText, decryptText, decryptWith, decryptSharedRelay, encryptSharedRelay, unwrapSharedRelayKey, wrapSharedRelayKey } from './crypto.js';
 import { browserNotificationsEnabled } from './push.js';
 import { mountCallApps, unmountCallApps, toggleCallApps, receiveCallApp } from './callapps.js';
 
@@ -696,6 +697,11 @@ const relayDownload = async (path, onProgress) => {
     }
     return new Blob(chunks, { type: 'application/octet-stream' });
 };
+const relaySignedUrl = async path => {
+    const { data, error } = await sb.storage.from(SNAP_BUCKET).createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) throw error || new Error('Could not create download URL');
+    return data.signedUrl;
+};
 const relayTransferJobs = new Map();
 const ingestRelayTransfer = async (row) => {
     try {
@@ -704,9 +710,21 @@ const ingestRelayTransfer = async (row) => {
         if (!existing) {
             const { data: relay, error } = await db.relayPayload(row.relay_id);
             if (error || !relay) throw error || new Error('Relay payload is unavailable');
-            const blob = await relayDownload(row.relay_id);
-            const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
-            const media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
+            let media;
+            if (relay.encryption_format === 'aes-gcm-chunks-v1') {
+                const key = await unwrapSharedRelayKey(state.priv, row.eph_pub, row.iv, row.wrapped_key);
+                media = await downloadChunkedRelay({
+                    url: await relaySignedUrl(row.relay_id),
+                    plainSize: Number(relay.plaintext_size),
+                    chunkSize: Number(relay.chunk_size),
+                    mime: row.mime || relay.mime || 'application/octet-stream',
+                    decryptChunk: (index, encrypted) => decryptSharedRelayChunk(key, relay.content_iv, index, encrypted),
+                });
+            } else {
+                const blob = await relayDownload(row.relay_id);
+                const plain = await decryptSharedRelay(state.priv, row.eph_pub, row.iv, row.wrapped_key, relay.content_iv, await blob.arrayBuffer());
+                media = new Blob([plain], { type: row.mime || relay.mime || 'application/octet-stream' });
+            }
             const m = { kind: 'media', me: false, name: row.name, mime: media.type, mediaKind: row.media_kind, data: media, at: new Date(row.created_at).getTime(), relay: true, transferId: row.id };
             await histUpdate(row.sender_id, history => {
                 if (isAfterClear(row.sender_id, m.at) && !history.some(entry => entry.transferId === row.id)) {
@@ -986,11 +1004,23 @@ const relayFile = async (uid, file, kind, meta) => {
     const relayId = crypto.randomUUID(), logicalId = crypto.randomUUID(), expires_at = new Date(Date.now() + TRANSFER_TTL_MS).toISOString();
     let queued = false;
     try {
-        const { ciphertext, content_iv, rawKey } = await encryptSharedRelay(await file.arrayBuffer());
-        const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv, mime: file.type || 'application/octet-stream', expires_at });
-        if (payloadError) throw payloadError;
-        const upload = await uploadRelay({ sb, projectUrl: SUPABASE_URL, publishableKey: SUPABASE_KEY, bucket: SNAP_BUCKET, path: relayId, body: ciphertext });
-        if (upload.error) throw upload.error;
+        let rawKey;
+        if (file.size > RELAY_PLAIN_CHUNK) {
+            const encryptor = await createChunkedRelayEncryptor(file);
+            rawKey = encryptor.rawKey;
+            const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv: encryptor.content_iv, mime: file.type || 'application/octet-stream', encryption_format: CHUNKED_RELAY_FORMAT, chunk_size: encryptor.chunkSize, plaintext_size: file.size, expires_at });
+            if (payloadError) throw payloadError;
+            const { data: { session }, error: sessionError } = await sb.auth.getSession();
+            if (sessionError || !session?.access_token) throw sessionError || new Error('Your session expired. Sign in again and retry the upload.');
+            await uploadChunkedRelay({ projectUrl: SUPABASE_URL, publishableKey: SUPABASE_KEY, accessToken: session.access_token, bucket: SNAP_BUCKET, path: relayId, encryptor });
+        } else {
+            const encrypted = await encryptSharedRelay(await file.arrayBuffer());
+            rawKey = encrypted.rawKey;
+            const { error: payloadError } = await db.addRelayPayload({ id: relayId, sender_id: state.me.id, content_iv: encrypted.content_iv, mime: file.type || 'application/octet-stream', expires_at });
+            if (payloadError) throw payloadError;
+            const upload = await uploadRelay({ sb, projectUrl: SUPABASE_URL, publishableKey: SUPABASE_KEY, bucket: SNAP_BUCKET, path: relayId, body: encrypted.ciphertext });
+            if (upload.error) throw upload.error;
+        }
         const rows = await Promise.all(recipients.map(async device => {
             const wrapped = await wrapSharedRelayKey(device.key, rawKey);
             return { id: crypto.randomUUID(), logical_id: logicalId, relay_id: relayId, sender_id: state.me.id, recipient_id: uid, recipient_device_id: device.id, name: meta.name, mime: meta.mime, media_kind: kind, bytes: file.size, wrapped_key: wrapped.wrapped_key, iv: wrapped.iv, eph_pub: wrapped.eph_pub, expires_at };

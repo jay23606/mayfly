@@ -73,13 +73,16 @@ export async function encryptSharedRelay(bytes) {
     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
     return { ciphertext, content_iv: b64.enc(iv), rawKey: await crypto.subtle.exportKey('raw', key) };
 }
+export async function unwrapSharedRelayKey(myPriv, ephPubStr, wrappedKeyIv, wrappedKeyB64) {
+    const rawKey = await decryptWith(myPriv, ephPubStr, wrappedKeyIv, b64.dec(wrappedKeyB64));
+    return crypto.subtle.importKey('raw', rawKey, AES, false, ['decrypt']);
+}
 export async function wrapSharedRelayKey(recipientPubJwk, rawKey) {
     const { ct, iv, ephPub } = await encryptFor(recipientPubJwk, rawKey);
     return { wrapped_key: b64.enc(ct), iv, eph_pub: ephPub };
 }
 export async function decryptSharedRelay(myPriv, ephPubStr, wrappedKeyIv, wrappedKeyB64, contentIvB64, ciphertext) {
-    const rawKey = await decryptWith(myPriv, ephPubStr, wrappedKeyIv, b64.dec(wrappedKeyB64));
-    const key = await crypto.subtle.importKey('raw', rawKey, AES, false, ['decrypt']);
+    const key = await unwrapSharedRelayKey(myPriv, ephPubStr, wrappedKeyIv, wrappedKeyB64);
     return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(contentIvB64) }, key, ciphertext);
 }
 

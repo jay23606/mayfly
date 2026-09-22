@@ -2,7 +2,7 @@
 // use the small Appmegle register/mount/onData contract; this host adapts that
 // contract to Mayfly's existing encrypted peer data connection.
 const APP_BASE = 'https://jay23606.github.io/appmegle/';
-const APP_BUILD = 'ab24441';
+const APP_BUILD = '4bd80f4';
 const appAsset = path => { const url = new URL(path, APP_BASE); url.searchParams.set('v', APP_BUILD); return url.href; };
 const ACTIVITIES = [
     ['chess', 'Chess'], ['geodash', 'Geometry Dash'], ['pacman', 'Pac-Man'],
